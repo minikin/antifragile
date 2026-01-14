@@ -26,7 +26,7 @@ pub trait Antifragile {
 }
 
 /// Triad: the three categories of response to volatility
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Triad {
     /// Benefits from volatility (convex response)
     Antifragile,

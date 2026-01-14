@@ -8,7 +8,7 @@ pub trait Antifragile {
     type Stressor: Copy + Add<Output = Self::Stressor> + Sub<Output = Self::Stressor>;
 
     /// The type of payoff/outcome (must be comparable and additive)
-    type Payoff: Copy + Add<Output = Self::Response> + PartialOrd;
+    type Payoff: Copy + Add<Output = Self::Payoff> + PartialOrd;
 
     /// The payoff function: what outcome does the system produce under given stress?
     ///

@@ -39,9 +39,9 @@ pub enum Triad {
 impl Display for Triad {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Triad::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
-            Triad::Fragile => write!(f, "Fragile (harmed by volatility)"),
-            Triad::Robust => write!(f, "Robust (unaffected by volatility)"),
+            Self::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
+            Self::Fragile => write!(f, "Fragile (harmed by volatility)"),
+            Self::Robust => write!(f, "Robust (unaffected by volatility)"),
         }
     }
 }

@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::ops::{Add, Sub};
 
 /// Trait for systems that can be analyzed for fragility
@@ -22,4 +23,25 @@ pub trait Antifragile {
     ///
     /// Named "twin" because it produces the same value twice, added together.
     fn twin(r: Self::Payoff) -> Self::Payoff;
+}
+
+/// Triad: the three categories of response to volatility
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Triad {
+    /// Benefits from volatility (convex response)
+    Antifragile,
+    /// Harmed by volatility (concave response)
+    Fragile,
+    /// Unaffected by volatility (linear response)
+    Robust,
+}
+
+impl Display for Triad {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Triad::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
+            Triad::Fragile => write!(f, "Fragile (harmed by volatility)"),
+            Triad::Robust => write!(f, "Robust (unaffected by volatility)"),
+        }
+    }
 }

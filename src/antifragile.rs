@@ -27,6 +27,8 @@ pub trait Antifragile {
 
 /// Triad: the three categories of response to volatility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[must_use]
 pub enum Triad {
     /// Benefits from volatility (convex response)
     Antifragile,
@@ -34,6 +36,40 @@ pub enum Triad {
     Fragile,
     /// Unaffected by volatility (linear response)
     Robust,
+}
+
+impl Triad {
+    /// Returns the numeric rank: Fragile=0, Robust=1, Antifragile=2
+    #[inline]
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Triad::Fragile => 0,
+            Triad::Robust => 1,
+            Triad::Antifragile => 2,
+        }
+    }
+
+    /// Returns true if this is the best classification (Antifragile)
+    #[inline]
+    #[must_use]
+    pub const fn is_antifragile(self) -> bool {
+        matches!(self, Triad::Antifragile)
+    }
+
+    /// Returns true if this is the worst classification (Fragile)
+    #[inline]
+    #[must_use]
+    pub const fn is_fragile(self) -> bool {
+        matches!(self, Triad::Fragile)
+    }
+
+    /// Returns true if this is neutral (Robust)
+    #[inline]
+    #[must_use]
+    pub const fn is_robust(self) -> bool {
+        matches!(self, Triad::Robust)
+    }
 }
 
 impl Display for Triad {

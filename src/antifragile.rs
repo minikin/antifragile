@@ -72,12 +72,34 @@ impl Triad {
     }
 }
 
-impl Display for Triad {
+impl PartialOrd for Triad {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Triad {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl Default for Triad {
+    /// Returns `Triad::Robust` as the neutral default
+    #[inline]
+    fn default() -> Self {
+        Self::Robust
+    }
+}
+
+impl std::fmt::Display for Triad {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
             Self::Fragile => write!(f, "Fragile (harmed by volatility)"),
             Self::Robust => write!(f, "Robust (unaffected by volatility)"),
+            Self::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
         }
     }
 }

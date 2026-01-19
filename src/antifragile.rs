@@ -94,6 +94,13 @@ impl Default for Triad {
     }
 }
 
+impl From<Triad> for u8 {
+    #[inline]
+    fn from(triad: Triad) -> Self {
+        triad.rank()
+    }
+}
+
 impl std::fmt::Display for Triad {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

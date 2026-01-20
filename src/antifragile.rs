@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+use std::error::Error;
 use std::fmt::Display;
 use std::ops::{Add, Sub};
 
@@ -101,7 +103,7 @@ impl From<Triad> for u8 {
     }
 }
 
-impl std::fmt::Display for Triad {
+impl Display for Triad {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Fragile => write!(f, "Fragile (harmed by volatility)"),
@@ -110,3 +112,15 @@ impl std::fmt::Display for Triad {
         }
     }
 }
+
+/// Error returned when converting an invalid value to [`Triad`]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidTriadValue(pub u8);
+
+impl Display for InvalidTriadValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid triad value: {} (expected 0, 1, or 2)", self.0)
+    }
+}
+
+impl Error for InvalidTriadValue {}

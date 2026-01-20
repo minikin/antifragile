@@ -124,3 +124,17 @@ impl Display for InvalidTriadValue {
 }
 
 impl Error for InvalidTriadValue {}
+
+impl TryFrom<u8> for Triad {
+    type Error = InvalidTriadValue;
+
+    #[inline]
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Antifragile),
+            1 => Ok(Self::Fragile),
+            2 => Ok(Self::Robust),
+            n => Err(InvalidTriadValue(n)),
+        }
+    }
+}

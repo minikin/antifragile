@@ -138,3 +138,78 @@ impl TryFrom<u8> for Triad {
         }
     }
 }
+
+/// Extension trait providing Triad classification methods
+pub trait TriadAnalysis: Antifragile {
+    /// Classify the system on Taleb's Triad at a specific operating point
+    ///
+    /// Uses Taleb's convexity test: f(x+Δ) + f(x-Δ) vs 2·f(x)
+    /// - If sum > twin → Antifragile (convex payoff)
+    /// - If sum < twin → Fragile (concave payoff)
+    /// - If sum = twin → Robust (linear payoff)
+    ///
+    /// # Arguments
+    /// * `at` - The operating point (stress level) to test
+    /// * `delta` - The perturbation size for the convexity test
+    ///
+    /// # Note
+    /// This is the formal mathematical definition. For learning
+    /// systems, also check `gains_from_stress()`.
+    fn classify(&self, at: Self::Stressor, delta: Self::Stressor) -> Triad
+    where
+        Self::Payoff: Sub<Output = Self::Payoff> + Default + PartialOrd,
+    {
+        let f_x = self.payoff(at);
+        let f_x_plus = self.payoff(at + delta);
+        let f_x_minus = self.payoff(at - delta);
+
+        let sum = f_x_plus + f_x_minus;
+        let twin_f_x = Self::twin(f_x);
+
+        if sum > twin_f_x {
+            Triad::Antifragile
+        } else if sum < twin_f_x {
+            Triad::Fragile
+        } else {
+            Triad::Robust
+        }
+    }
+
+    /// Check if system is antifragile at a given point (convexity test)
+    #[must_use]
+    fn is_antifragile(&self, at: Self::Stressor, delta: Self::Stressor) -> bool
+    where
+        Self::Payoff: Sub<Output = Self::Payoff> + Default + PartialOrd,
+    {
+        self.classify(at, delta) == Triad::Antifragile
+    }
+
+    /// Does the system gain from increased stress?
+    ///
+    /// A practical test: does higher stress lead to better payoff?
+    /// Returns true if payoff(high) > payoff(low).
+    ///
+    /// This is useful for learning systems where payoff improves
+    /// with exposure, even if mathematically concave.
+    #[must_use]
+    fn gains_from_stress(&self, low: Self::Stressor, high: Self::Stressor) -> bool {
+        self.payoff(high) > self.payoff(low)
+    }
+
+    /// Is the payoff stable across stress levels?
+    ///
+    /// Returns true if payoff varies by less than threshold.
+    /// Indicates robust behavior.
+    #[must_use]
+    fn is_stable(&self, low: Self::Stressor, high: Self::Stressor, threshold: Self::Payoff) -> bool
+    where
+        Self::Payoff: Sub<Output = Self::Payoff>,
+    {
+        let diff = self.payoff(high) + Self::twin(self.payoff(low));
+        let sum = self.payoff(low) + Self::twin(self.payoff(high));
+        diff < sum + threshold && sum < diff + threshold
+    }
+}
+
+// Blanket implementation for all Antifragile types
+impl<T: Antifragile> TriadAnalysis for T {}

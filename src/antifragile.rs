@@ -213,3 +213,26 @@ pub trait TriadAnalysis: Antifragile {
 
 // Blanket implementation for all Antifragile types
 impl<T: Antifragile> TriadAnalysis for T {}
+
+/// A wrapper that marks a system as verified on the Triad
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct Verified<T> {
+    inner: T,
+    classification: Triad,
+}
+
+impl<T: Antifragile> Verified<T>
+where
+    T::Payoff: Sub<Output = T::Payoff> + Default + PartialOrd,
+{
+    /// Verify a system's Triad classification at a given operating point
+    #[must_use]
+    pub fn check(system: T, at: T::Stressor, delta: T::Stressor) -> Self {
+        let classification = system.classify(at, delta);
+        Self {
+            inner: system,
+            classification,
+        }
+    }
+}

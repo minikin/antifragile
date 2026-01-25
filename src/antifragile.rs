@@ -235,4 +235,61 @@ where
             classification,
         }
     }
+
+    /// Get the verified Triad classification
+    #[inline]
+    pub const fn classification(&self) -> Triad {
+        self.classification
+    }
+
+    /// Get reference to inner system
+    #[inline]
+    #[must_use]
+    pub const fn inner(&self) -> &T {
+        &self.inner
+    }
+
+    /// Unwrap the verified system
+    #[inline]
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        self.inner
+    }
+
+    /// Returns true if the system was classified as Fragile
+    #[inline]
+    #[must_use]
+    pub const fn is_antifragile(&self) -> bool {
+        self.classification.is_antifragile()
+    }
+
+    /// Returns true if the system was classified as Fragile
+    #[inline]
+    #[must_use]
+    pub const fn is_fragile(&self) -> bool {
+        self.classification.is_fragile()
+    }
+
+    /// Returns true if the system was classified as Robust
+    #[inline]
+    #[must_use]
+    pub const fn is_robust(&self) -> bool {
+        self.classification.is_robust()
+    }
+}
+
+impl<T> AsRef<T> for Verified<T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        &self.inner
+    }
+}
+
+impl<T> std::ops::Deref for Verified<T> {
+    type Target = T;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }

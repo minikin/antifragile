@@ -26,10 +26,7 @@
 //!     fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
 //!         x * x  // Quadratic: convex response
 //!     }
-//!
-//!     fn twin(r: Self::Payoff) -> Self::Payoff {
-//!         r + r
-//!     }
+//!     // twin() uses default implementation: r + r
 //! }
 //!
 //! let system = ConvexSystem;
@@ -50,4 +47,4 @@
 /// Core types and traits for antifragility analysis.
 pub mod antifragile;
 
-pub use antifragile::{Antifragile, InvalidTriadValue, Triad, TriadAnalysis, Verified};
+pub use antifragile::{Antifragile, InvalidTriadValue, ParseTriadError, Triad, TriadAnalysis, Verified};

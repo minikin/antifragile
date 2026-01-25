@@ -1,6 +1,7 @@
 use core::cmp::Ordering;
 use core::fmt::Display;
 use core::ops::{Add, Sub};
+use core::str::FromStr;
 
 #[cfg(feature = "std")]
 use std::error::Error;
@@ -29,7 +30,12 @@ pub trait Antifragile {
     /// Used for convexity test: f(x+Δ) + f(x-Δ) vs twin(f(x))
     ///
     /// Named "twin" because it produces the same value twice, added together.
-    fn twin(r: Self::Payoff) -> Self::Payoff;
+    ///
+    /// The default implementation returns `r + r`. Override if your `Payoff` type
+    /// has a more efficient doubling operation.
+    fn twin(r: Self::Payoff) -> Self::Payoff {
+        r + r
+    }
 }
 
 /// Triad: the three categories of response to volatility
@@ -46,7 +52,7 @@ pub enum Triad {
 }
 
 impl Triad {
-    /// Returns the numeric rank: Fragile=0, Robust=1, Antifragile=2
+    /// Returns the numeric value matching enum discriminant order: Antifragile=0, Fragile=1, Robust=2
     #[inline]
     #[must_use]
     pub const fn rank(self) -> u8 {
@@ -87,9 +93,18 @@ impl PartialOrd for Triad {
 }
 
 impl Ord for Triad {
+    /// Orders by desirability: Fragile < Robust < Antifragile
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        self.rank().cmp(&other.rank())
+        // Order by desirability (separate from rank which follows enum discriminant order)
+        const fn desirability(t: Triad) -> u8 {
+            match t {
+                Triad::Fragile => 0,
+                Triad::Robust => 1,
+                Triad::Antifragile => 2,
+            }
+        }
+        desirability(*self).cmp(&desirability(*other))
     }
 }
 
@@ -105,6 +120,17 @@ impl From<Triad> for u8 {
     #[inline]
     fn from(triad: Triad) -> Self {
         triad.rank()
+    }
+}
+
+impl From<Triad> for &'static str {
+    #[inline]
+    fn from(triad: Triad) -> Self {
+        match triad {
+            Triad::Antifragile => "antifragile",
+            Triad::Fragile => "fragile",
+            Triad::Robust => "robust",
+        }
     }
 }
 
@@ -141,6 +167,35 @@ impl TryFrom<u8> for Triad {
             1 => Ok(Self::Fragile),
             2 => Ok(Self::Robust),
             n => Err(InvalidTriadValue(n)),
+        }
+    }
+}
+
+/// Error returned when parsing a string into [`Triad`] fails
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseTriadError;
+
+impl Display for ParseTriadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "invalid triad string (expected \"antifragile\", \"fragile\", or \"robust\")")
+    }
+}
+
+#[cfg(feature = "std")]
+impl Error for ParseTriadError {}
+
+impl FromStr for Triad {
+    type Err = ParseTriadError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("antifragile") {
+            Ok(Self::Antifragile)
+        } else if s.eq_ignore_ascii_case("fragile") {
+            Ok(Self::Fragile)
+        } else if s.eq_ignore_ascii_case("robust") {
+            Ok(Self::Robust)
+        } else {
+            Err(ParseTriadError)
         }
     }
 }
@@ -204,16 +259,42 @@ pub trait TriadAnalysis: Antifragile {
 
     /// Is the payoff stable across stress levels?
     ///
-    /// Returns true if payoff varies by less than threshold.
-    /// Indicates robust behavior.
+    /// Returns true if the absolute difference between `payoff(high)` and
+    /// `payoff(low)` is less than or equal to `threshold`.
+    ///
+    /// This indicates robust behavior where the system's output doesn't
+    /// vary significantly with changes in stress.
+    ///
+    /// # Example
+    ///
+    /// A system with constant payoff is perfectly stable:
+    /// ```
+    /// use antifragile::{Antifragile, TriadAnalysis};
+    ///
+    /// struct ConstantSystem;
+    /// impl Antifragile for ConstantSystem {
+    ///     type Stressor = f64;
+    ///     type Payoff = f64;
+    ///     fn payoff(&self, _: Self::Stressor) -> Self::Payoff { 10.0 }
+    /// }
+    ///
+    /// let system = ConstantSystem;
+    /// assert!(system.is_stable(1.0, 100.0, 0.001));
+    /// ```
     #[must_use]
     fn is_stable(&self, low: Self::Stressor, high: Self::Stressor, threshold: Self::Payoff) -> bool
     where
         Self::Payoff: Sub<Output = Self::Payoff>,
     {
-        let diff = self.payoff(high) + Self::twin(self.payoff(low));
-        let sum = self.payoff(low) + Self::twin(self.payoff(high));
-        diff < sum + threshold && sum < diff + threshold
+        let payoff_low = self.payoff(low);
+        let payoff_high = self.payoff(high);
+
+        // Check |payoff_high - payoff_low| <= threshold
+        if payoff_high >= payoff_low {
+            payoff_high - payoff_low <= threshold
+        } else {
+            payoff_low - payoff_high <= threshold
+        }
     }
 }
 
@@ -262,7 +343,7 @@ where
         self.inner
     }
 
-    /// Returns true if the system was classified as Fragile
+    /// Returns true if the system was classified as Antifragile
     #[inline]
     #[must_use]
     pub const fn is_antifragile(&self) -> bool {
@@ -318,9 +399,6 @@ mod tests {
         fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
             x * x
         }
-        fn twin(r: Self::Payoff) -> Self::Payoff {
-            r + r
-        }
     }
 
     impl Antifragile for ConcaveFn {
@@ -329,9 +407,6 @@ mod tests {
         fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
             x.abs().sqrt()
         }
-        fn twin(r: Self::Payoff) -> Self::Payoff {
-            r + r
-        }
     }
 
     impl Antifragile for LinearFn {
@@ -339,9 +414,6 @@ mod tests {
         type Payoff = f64;
         fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
             self.slope * x + self.intercept
-        }
-        fn twin(r: Self::Payoff) -> Self::Payoff {
-            r + r
         }
     }
 
@@ -401,17 +473,17 @@ mod tests {
 
     #[test]
     fn test_triad_ordering() {
-        // Fragile < Robust < Antifragile
+        // Ordering by desirability: Fragile < Robust < Antifragile
         assert!(Triad::Fragile < Triad::Robust);
         assert!(Triad::Robust < Triad::Antifragile);
         assert!(Triad::Fragile < Triad::Antifragile);
 
-        // Test rank values
-        assert_eq!(Triad::Fragile.rank(), 0);
-        assert_eq!(Triad::Robust.rank(), 1);
-        assert_eq!(Triad::Antifragile.rank(), 2);
+        // Test rank values (matches enum discriminant order)
+        assert_eq!(Triad::Antifragile.rank(), 0);
+        assert_eq!(Triad::Fragile.rank(), 1);
+        assert_eq!(Triad::Robust.rank(), 2);
 
-        // Test sorting
+        // Test sorting (sorts by desirability, worst to best)
         let mut triads = vec![Triad::Antifragile, Triad::Fragile, Triad::Robust];
         triads.sort();
         assert_eq!(
@@ -466,6 +538,13 @@ mod tests {
     }
 
     #[test]
+    fn test_triad_into_str() {
+        assert_eq!(<&str>::from(Triad::Antifragile), "antifragile");
+        assert_eq!(<&str>::from(Triad::Fragile), "fragile");
+        assert_eq!(<&str>::from(Triad::Robust), "robust");
+    }
+
+    #[test]
     fn test_verified_deref() {
         let system = ConvexFn;
         let verified = Verified::check(system, 10.0, 1.0);
@@ -479,6 +558,33 @@ mod tests {
         assert_eq!(
             format!("{err}"),
             "invalid triad value: 42 (expected 0, 1, or 2)"
+        );
+    }
+
+    #[test]
+    fn test_triad_from_str() {
+        // Case insensitive parsing
+        assert_eq!("antifragile".parse::<Triad>(), Ok(Triad::Antifragile));
+        assert_eq!("Antifragile".parse::<Triad>(), Ok(Triad::Antifragile));
+        assert_eq!("ANTIFRAGILE".parse::<Triad>(), Ok(Triad::Antifragile));
+
+        assert_eq!("fragile".parse::<Triad>(), Ok(Triad::Fragile));
+        assert_eq!("Fragile".parse::<Triad>(), Ok(Triad::Fragile));
+
+        assert_eq!("robust".parse::<Triad>(), Ok(Triad::Robust));
+        assert_eq!("ROBUST".parse::<Triad>(), Ok(Triad::Robust));
+
+        // Invalid strings
+        assert_eq!("invalid".parse::<Triad>(), Err(ParseTriadError));
+        assert_eq!("".parse::<Triad>(), Err(ParseTriadError));
+    }
+
+    #[test]
+    fn test_parse_triad_error_display() {
+        let err = ParseTriadError;
+        assert_eq!(
+            format!("{err}"),
+            "invalid triad string (expected \"antifragile\", \"fragile\", or \"robust\")"
         );
     }
 }

@@ -31,12 +31,3 @@ serde = { version = "1.0", features = ["derive"] }
 default = ["std"]
 std = []
 serde = ["dep:serde"]
-
-[lints.rust]
-unsafe_code = "forbid"
-missing_docs = "deny"
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-module_name_repetitions = "allow"

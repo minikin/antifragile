@@ -3,6 +3,9 @@ use std::error::Error;
 use std::fmt::Display;
 use std::ops::{Add, Sub};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 /// Trait for systems that can be analyzed for fragility
 ///
 /// Implement this trait to measure how your system responds to stress.
@@ -291,5 +294,188 @@ impl<T> std::ops::Deref for Verified<T> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Test helpers - mathematical functions for verifying the convexity test
+    struct ConvexFn; // f(x) = x²
+    struct ConcaveFn; // f(x) = √x
+    struct LinearFn {
+        slope: f64,
+        intercept: f64,
+    }
+
+    impl Antifragile for ConvexFn {
+        type Stressor = f64;
+        type Payoff = f64;
+        fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+            x * x
+        }
+        fn twin(r: Self::Payoff) -> Self::Payoff {
+            r + r
+        }
+    }
+
+    impl Antifragile for ConcaveFn {
+        type Stressor = f64;
+        type Payoff = f64;
+        fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+            x.abs().sqrt()
+        }
+        fn twin(r: Self::Payoff) -> Self::Payoff {
+            r + r
+        }
+    }
+
+    impl Antifragile for LinearFn {
+        type Stressor = f64;
+        type Payoff = f64;
+        fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+            self.slope * x + self.intercept
+        }
+        fn twin(r: Self::Payoff) -> Self::Payoff {
+            r + r
+        }
+    }
+
+    #[test]
+    fn test_convex_is_antifragile() {
+        let system = ConvexFn;
+        assert!(system.is_antifragile(10.0, 1.0));
+        assert_eq!(system.classify(10.0, 1.0), Triad::Antifragile);
+    }
+
+    #[test]
+    fn test_concave_is_fragile() {
+        let system = ConcaveFn;
+        assert_eq!(system.classify(10.0, 1.0), Triad::Fragile);
+    }
+
+    #[test]
+    fn test_linear_is_robust() {
+        let system = LinearFn {
+            slope: 2.0,
+            intercept: 5.0,
+        };
+        assert_eq!(system.classify(10.0, 1.0), Triad::Robust);
+    }
+
+    #[test]
+    fn test_gains_from_stress() {
+        let convex = ConvexFn;
+        assert!(convex.gains_from_stress(1.0, 2.0)); // 1 < 4
+
+        let concave = ConcaveFn;
+        assert!(concave.gains_from_stress(1.0, 4.0)); // 1 < 2
+    }
+
+    #[test]
+    fn test_verified_wrapper() {
+        let system = ConvexFn;
+        let verified = Verified::check(system, 10.0, 1.0);
+        assert_eq!(verified.classification(), Triad::Antifragile);
+    }
+
+    #[test]
+    fn test_triad_display() {
+        assert_eq!(
+            format!("{}", Triad::Antifragile),
+            "Antifragile (benefits from volatility)"
+        );
+        assert_eq!(
+            format!("{}", Triad::Fragile),
+            "Fragile (harmed by volatility)"
+        );
+        assert_eq!(
+            format!("{}", Triad::Robust),
+            "Robust (unaffected by volatility)"
+        );
+    }
+
+    #[test]
+    fn test_triad_ordering() {
+        // Fragile < Robust < Antifragile
+        assert!(Triad::Fragile < Triad::Robust);
+        assert!(Triad::Robust < Triad::Antifragile);
+        assert!(Triad::Fragile < Triad::Antifragile);
+
+        // Test rank values
+        assert_eq!(Triad::Fragile.rank(), 0);
+        assert_eq!(Triad::Robust.rank(), 1);
+        assert_eq!(Triad::Antifragile.rank(), 2);
+
+        // Test sorting
+        let mut triads = vec![Triad::Antifragile, Triad::Fragile, Triad::Robust];
+        triads.sort();
+        assert_eq!(
+            triads,
+            vec![Triad::Fragile, Triad::Robust, Triad::Antifragile]
+        );
+    }
+
+    #[test]
+    fn test_triad_predicates() {
+        assert!(Triad::Antifragile.is_antifragile());
+        assert!(!Triad::Antifragile.is_fragile());
+        assert!(!Triad::Antifragile.is_robust());
+
+        assert!(Triad::Fragile.is_fragile());
+        assert!(!Triad::Fragile.is_antifragile());
+        assert!(!Triad::Fragile.is_robust());
+
+        assert!(Triad::Robust.is_robust());
+        assert!(!Triad::Robust.is_antifragile());
+        assert!(!Triad::Robust.is_fragile());
+    }
+
+    #[test]
+    fn test_verified_predicates() {
+        let system = ConvexFn;
+        let verified = Verified::check(system, 10.0, 1.0);
+        assert!(verified.is_antifragile());
+        assert!(!verified.is_fragile());
+        assert!(!verified.is_robust());
+    }
+
+    #[test]
+    fn test_triad_default() {
+        assert_eq!(Triad::default(), Triad::Robust);
+    }
+
+    #[test]
+    fn test_triad_from_u8() {
+        assert_eq!(Triad::try_from(0_u8), Ok(Triad::Fragile));
+        assert_eq!(Triad::try_from(1_u8), Ok(Triad::Robust));
+        assert_eq!(Triad::try_from(2_u8), Ok(Triad::Antifragile));
+        assert_eq!(Triad::try_from(3_u8), Err(InvalidTriadValue(3)));
+        assert_eq!(Triad::try_from(255_u8), Err(InvalidTriadValue(255)));
+    }
+
+    #[test]
+    fn test_triad_into_u8() {
+        assert_eq!(u8::from(Triad::Fragile), 0);
+        assert_eq!(u8::from(Triad::Robust), 1);
+        assert_eq!(u8::from(Triad::Antifragile), 2);
+    }
+
+    #[test]
+    fn test_verified_deref() {
+        let system = ConvexFn;
+        let verified = Verified::check(system, 10.0, 1.0);
+        // Can call payoff through Deref
+        assert_eq!(verified.payoff(5.0), 25.0);
+    }
+
+    #[test]
+    fn test_invalid_triad_value_display() {
+        let err = InvalidTriadValue(42);
+        assert_eq!(
+            format!("{err}"),
+            "invalid triad value: 42 (expected 0, 1, or 2)"
+        );
     }
 }

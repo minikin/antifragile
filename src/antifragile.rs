@@ -1,7 +1,9 @@
-use std::cmp::Ordering;
+use core::cmp::Ordering;
+use core::fmt::Display;
+use core::ops::{Add, Sub};
+
+#[cfg(feature = "std")]
 use std::error::Error;
-use std::fmt::Display;
-use std::ops::{Add, Sub};
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -107,11 +109,11 @@ impl From<Triad> for u8 {
 }
 
 impl Display for Triad {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
             Self::Fragile => write!(f, "Fragile (harmed by volatility)"),
             Self::Robust => write!(f, "Robust (unaffected by volatility)"),
-            Self::Antifragile => write!(f, "Antifragile (benefits from volatility)"),
         }
     }
 }
@@ -121,11 +123,12 @@ impl Display for Triad {
 pub struct InvalidTriadValue(pub u8);
 
 impl Display for InvalidTriadValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "invalid triad value: {} (expected 0, 1, or 2)", self.0)
     }
 }
 
+#[cfg(feature = "std")]
 impl Error for InvalidTriadValue {}
 
 impl TryFrom<u8> for Triad {
@@ -288,7 +291,7 @@ impl<T> AsRef<T> for Verified<T> {
     }
 }
 
-impl<T> std::ops::Deref for Verified<T> {
+impl<T> core::ops::Deref for Verified<T> {
     type Target = T;
 
     #[inline]
@@ -448,18 +451,18 @@ mod tests {
 
     #[test]
     fn test_triad_from_u8() {
-        assert_eq!(Triad::try_from(0_u8), Ok(Triad::Fragile));
-        assert_eq!(Triad::try_from(1_u8), Ok(Triad::Robust));
-        assert_eq!(Triad::try_from(2_u8), Ok(Triad::Antifragile));
+        assert_eq!(Triad::try_from(0_u8), Ok(Triad::Antifragile));
+        assert_eq!(Triad::try_from(1_u8), Ok(Triad::Fragile));
+        assert_eq!(Triad::try_from(2_u8), Ok(Triad::Robust));
         assert_eq!(Triad::try_from(3_u8), Err(InvalidTriadValue(3)));
         assert_eq!(Triad::try_from(255_u8), Err(InvalidTriadValue(255)));
     }
 
     #[test]
     fn test_triad_into_u8() {
-        assert_eq!(u8::from(Triad::Fragile), 0);
-        assert_eq!(u8::from(Triad::Robust), 1);
-        assert_eq!(u8::from(Triad::Antifragile), 2);
+        assert_eq!(u8::from(Triad::Antifragile), 0);
+        assert_eq!(u8::from(Triad::Fragile), 1);
+        assert_eq!(u8::from(Triad::Robust), 2);
     }
 
     #[test]
@@ -467,7 +470,7 @@ mod tests {
         let system = ConvexFn;
         let verified = Verified::check(system, 10.0, 1.0);
         // Can call payoff through Deref
-        assert_eq!(verified.payoff(5.0), 25.0);
+        assert!((verified.payoff(5.0) - 25.0).abs() < f64::EPSILON);
     }
 
     #[test]

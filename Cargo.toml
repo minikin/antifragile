@@ -18,6 +18,7 @@ keywords = [
 ]
 categories = ["data-structures", "encoding", "rust-patterns", "algorithms"]
 readme = "README.md"
+exclude = ["internal/", ".github/", "target/"]
 
 [dependencies]
 serde = { version = "1.0", optional = true, features = ["derive"] }
@@ -27,5 +28,15 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 
 [features]
-default = []
+default = ["std"]
+std = []
 serde = ["dep:serde"]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"

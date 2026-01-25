@@ -1,16 +1,15 @@
-//! Antifragile - A Rust library for analyzing system responses to stress
+//! #  Antifragile - A Rust library for analyzing system responses to stress.
 //!
 //! This library implements concepts from Nassim Nicholas Taleb's antifragility theory.
-//! # Antifragile
 //!
 //! ## Overview
 //!
 //! This library provides a trait-based system for analyzing how systems respond
 //! to stress and volatility, classifying them into three categories:
 //!
+//! - **Antifragile**: Benefits from volatility (convex response)
 //! - **Fragile**: Harmed by volatility (concave response)
 //! - **Robust**: Unaffected by volatility (linear response)
-//! - **Antifragile**: Benefits from volatility (convex response)
 //!
 //! ## Quick Start
 //!

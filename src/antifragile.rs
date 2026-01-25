@@ -51,9 +51,9 @@ impl Triad {
     #[must_use]
     pub const fn rank(self) -> u8 {
         match self {
-            Triad::Fragile => 0,
-            Triad::Robust => 1,
-            Triad::Antifragile => 2,
+            Triad::Antifragile => 0,
+            Triad::Fragile => 1,
+            Triad::Robust => 2,
         }
     }
 

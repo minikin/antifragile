@@ -177,7 +177,10 @@ pub struct ParseTriadError;
 
 impl Display for ParseTriadError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "invalid triad string (expected \"antifragile\", \"fragile\", or \"robust\")")
+        write!(
+            f,
+            "invalid triad string (expected \"antifragile\", \"fragile\", or \"robust\")"
+        )
     }
 }
 

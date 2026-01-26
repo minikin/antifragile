@@ -47,4 +47,6 @@
 /// Core types and traits for antifragility analysis.
 pub mod antifragile;
 
-pub use antifragile::{Antifragile, InvalidTriadValue, ParseTriadError, Triad, TriadAnalysis, Verified};
+pub use antifragile::{
+    Antifragile, InvalidTriadValue, ParseTriadError, Triad, TriadAnalysis, Verified,
+};

@@ -39,28 +39,30 @@ pub trait Antifragile {
 }
 
 /// Triad: the three categories of response to volatility
+///
+/// Variants are ordered by desirability: Fragile < Robust < Antifragile.
+/// This ordering is consistent with `Ord`, `rank()`, and numeric conversions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[repr(u8)]
 #[must_use]
 pub enum Triad {
-    /// Benefits from volatility (convex response)
-    Antifragile,
-    /// Harmed by volatility (concave response)
+    /// Harmed by volatility (concave response) - least desirable
     Fragile,
-    /// Unaffected by volatility (linear response)
+    /// Unaffected by volatility (linear response) - neutral
     Robust,
+    /// Benefits from volatility (convex response) - most desirable
+    Antifragile,
 }
 
 impl Triad {
-    /// Returns the numeric value matching enum discriminant order: Antifragile=0, Fragile=1, Robust=2
+    /// Returns the desirability rank: Fragile=0, Robust=1, Antifragile=2
+    ///
+    /// Higher rank means more desirable. This is consistent with `Ord` ordering.
     #[inline]
     #[must_use]
     pub const fn rank(self) -> u8 {
-        match self {
-            Triad::Antifragile => 0,
-            Triad::Fragile => 1,
-            Triad::Robust => 2,
-        }
+        self as u8
     }
 
     /// Returns true if this is the best classification (Antifragile)
@@ -96,15 +98,7 @@ impl Ord for Triad {
     /// Orders by desirability: Fragile < Robust < Antifragile
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        // Order by desirability (separate from rank which follows enum discriminant order)
-        const fn desirability(t: Triad) -> u8 {
-            match t {
-                Triad::Fragile => 0,
-                Triad::Robust => 1,
-                Triad::Antifragile => 2,
-            }
-        }
-        desirability(*self).cmp(&desirability(*other))
+        self.rank().cmp(&other.rank())
     }
 }
 
@@ -163,9 +157,9 @@ impl TryFrom<u8> for Triad {
     #[inline]
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(Self::Antifragile),
-            1 => Ok(Self::Fragile),
-            2 => Ok(Self::Robust),
+            0 => Ok(Self::Fragile),
+            1 => Ok(Self::Robust),
+            2 => Ok(Self::Antifragile),
             n => Err(InvalidTriadValue(n)),
         }
     }
@@ -481,10 +475,10 @@ mod tests {
         assert!(Triad::Robust < Triad::Antifragile);
         assert!(Triad::Fragile < Triad::Antifragile);
 
-        // Test rank values (matches enum discriminant order)
-        assert_eq!(Triad::Antifragile.rank(), 0);
-        assert_eq!(Triad::Fragile.rank(), 1);
-        assert_eq!(Triad::Robust.rank(), 2);
+        // Test rank values (matches desirability order)
+        assert_eq!(Triad::Fragile.rank(), 0);
+        assert_eq!(Triad::Robust.rank(), 1);
+        assert_eq!(Triad::Antifragile.rank(), 2);
 
         // Test sorting (sorts by desirability, worst to best)
         let mut triads = vec![Triad::Antifragile, Triad::Fragile, Triad::Robust];
@@ -526,18 +520,18 @@ mod tests {
 
     #[test]
     fn test_triad_from_u8() {
-        assert_eq!(Triad::try_from(0_u8), Ok(Triad::Antifragile));
-        assert_eq!(Triad::try_from(1_u8), Ok(Triad::Fragile));
-        assert_eq!(Triad::try_from(2_u8), Ok(Triad::Robust));
+        assert_eq!(Triad::try_from(0_u8), Ok(Triad::Fragile));
+        assert_eq!(Triad::try_from(1_u8), Ok(Triad::Robust));
+        assert_eq!(Triad::try_from(2_u8), Ok(Triad::Antifragile));
         assert_eq!(Triad::try_from(3_u8), Err(InvalidTriadValue(3)));
         assert_eq!(Triad::try_from(255_u8), Err(InvalidTriadValue(255)));
     }
 
     #[test]
     fn test_triad_into_u8() {
-        assert_eq!(u8::from(Triad::Antifragile), 0);
-        assert_eq!(u8::from(Triad::Fragile), 1);
-        assert_eq!(u8::from(Triad::Robust), 2);
+        assert_eq!(u8::from(Triad::Fragile), 0);
+        assert_eq!(u8::from(Triad::Robust), 1);
+        assert_eq!(u8::from(Triad::Antifragile), 2);
     }
 
     #[test]

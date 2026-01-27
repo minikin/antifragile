@@ -78,9 +78,9 @@ fn test_triad_ordering() {
 
 #[test]
 fn test_triad_conversions() {
-    // To/from u8
-    assert_eq!(u8::from(Triad::Antifragile), 0);
-    assert_eq!(Triad::try_from(0u8), Ok(Triad::Antifragile));
+    // To/from u8 (ordered by desirability: Fragile=0, Robust=1, Antifragile=2)
+    assert_eq!(u8::from(Triad::Fragile), 0);
+    assert_eq!(Triad::try_from(0u8), Ok(Triad::Fragile));
 
     // To/from string
     let s: &str = Triad::Fragile.into();

@@ -86,9 +86,9 @@ assert!(Triad::Robust < Triad::Antifragile);
 let s: &str = classification.into();  // "antifragile"
 let parsed: Triad = "robust".parse().unwrap();
 
-// Convert to/from u8
-let n: u8 = classification.into();  // 0
-let from_n = Triad::try_from(1u8).unwrap();  // Triad::Fragile
+// Convert to/from u8 (Fragile=0, Robust=1, Antifragile=2)
+let n: u8 = classification.into();  // 2
+let from_n = Triad::try_from(1u8).unwrap();  // Triad::Robust
 ```
 
 ### The Verified Wrapper

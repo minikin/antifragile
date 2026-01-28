@@ -100,7 +100,6 @@ impl Triad {
     /// - `Antifragile` ↔ `Fragile`
     /// - `Robust` → `Robust` (self-opposite, as it's neutral)
     #[inline]
-    #[must_use]
     pub const fn opposite(self) -> Self {
         match self {
             Self::Antifragile => Self::Fragile,

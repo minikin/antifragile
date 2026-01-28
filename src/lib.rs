@@ -33,6 +33,31 @@
 //! assert_eq!(system.classify(10.0, 1.0), Triad::Antifragile);
 //! ```
 //!
+//! ## Mathematical Foundation
+//!
+//! The classification is based on **second-order effects** (convexity):
+//!
+//! For a payoff function f(x) at operating point x with perturbation δ:
+//!
+//! - **Convex (Antifragile)**: f(x+δ) + f(x-δ) > 2·f(x)
+//! - **Concave (Fragile)**: f(x+δ) + f(x-δ) < 2·f(x)
+//! - **Linear (Robust)**: f(x+δ) + f(x-δ) = 2·f(x)
+//!
+//! This is Jensen's inequality applied to volatility.
+//!
+//! ## When to Use This Library
+//!
+//! **Good fit:**
+//! - Analyzing financial instruments (options, insurance)
+//! - Evaluating system resilience in chaos engineering
+//! - Comparing algorithms under varying load
+//! - Educational purposes (demonstrating Taleb's theory)
+//!
+//! **Not a good fit:**
+//! - Real-time trading decisions (too abstract)
+//! - Systems where "stress" is not mathematically quantifiable
+//! - Cases requiring probabilistic analysis (use Monte Carlo instead)
+//!
 //! ## Feature Flags
 //!
 //! - `serde`: Enable serialization/deserialization for `Triad` and `Verified`

@@ -701,4 +701,37 @@ mod tests {
             "invalid triad string (expected \"antifragile\", \"fragile\", or \"robust\")"
         );
     }
+
+    #[test]
+    fn test_classify_at_zero() {
+        let system = ConvexFn;
+        let _ = system.classify(0.0, 0.1);
+    }
+
+    #[test]
+    fn test_classify_with_zero_delta() {
+        let system = ConvexFn;
+        assert_eq!(system.classify(10.0, 0.0), Triad::Robust);
+    }
+
+    #[test]
+    fn test_classify_negative_stressor() {
+        let system = ConvexFn;
+        assert_eq!(system.classify(-10.0, 1.0), Triad::Antifragile);
+    }
+
+    #[test]
+    fn test_triad_opposite() {
+        assert_eq!(Triad::Antifragile.opposite(), Triad::Fragile);
+        assert_eq!(Triad::Fragile.opposite(), Triad::Antifragile);
+        assert_eq!(Triad::Robust.opposite(), Triad::Robust);
+        assert_eq!(Triad::Antifragile.opposite().opposite(), Triad::Antifragile);
+    }
+
+    #[test]
+    fn test_triad_iter() {
+        let all: Vec<_> = Triad::iter().collect();
+        assert_eq!(all, vec![Triad::Fragile, Triad::Robust, Triad::Antifragile]);
+        assert_eq!(Triad::ALL.len(), 3);
+    }
 }

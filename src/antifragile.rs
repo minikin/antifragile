@@ -56,6 +56,15 @@ pub enum Triad {
 }
 
 impl Triad {
+    /// All variants in desirability order: `[Fragile, Robust, Antifragile]`
+    pub const ALL: [Self; 3] = [Self::Fragile, Self::Robust, Self::Antifragile];
+
+    /// Returns an iterator over all variants in desirability order
+    #[inline]
+    pub fn iter() -> impl Iterator<Item = Self> {
+        Self::ALL.into_iter()
+    }
+
     /// Returns the desirability rank: Fragile=0, Robust=1, Antifragile=2
     ///
     /// Higher rank means more desirable. This is consistent with `Ord` ordering.
@@ -84,6 +93,20 @@ impl Triad {
     #[must_use]
     pub const fn is_robust(self) -> bool {
         matches!(self, Triad::Robust)
+    }
+
+    /// Returns the opposite classification
+    ///
+    /// - `Antifragile` ↔ `Fragile`
+    /// - `Robust` → `Robust` (self-opposite, as it's neutral)
+    #[inline]
+    #[must_use]
+    pub const fn opposite(self) -> Self {
+        match self {
+            Self::Antifragile => Self::Fragile,
+            Self::Fragile => Self::Antifragile,
+            Self::Robust => Self::Robust,
+        }
     }
 }
 
@@ -211,8 +234,8 @@ pub trait TriadAnalysis: Antifragile {
     /// * `delta` - The perturbation size for the convexity test
     ///
     /// # Note
-    /// This is the formal mathematical definition. For learning
-    /// systems, also check `gains_from_stress()`.
+    /// This uses exact comparison. For floating-point payoffs where exact
+    /// equality is unlikely, use [`classify_with_tolerance`](Self::classify_with_tolerance).
     fn classify(&self, at: Self::Stressor, delta: Self::Stressor) -> Triad
     where
         Self::Payoff: Sub<Output = Self::Payoff> + Default + PartialOrd,
@@ -230,6 +253,69 @@ pub trait TriadAnalysis: Antifragile {
             Triad::Fragile
         } else {
             Triad::Robust
+        }
+    }
+
+    /// Classify with numerical tolerance for floating-point payoffs
+    ///
+    /// Like [`classify`](Self::classify), but treats values within `epsilon` of
+    /// each other as equal. This is useful for `f32`/`f64` payoffs where exact
+    /// equality is rare due to floating-point precision.
+    ///
+    /// # Arguments
+    /// * `at` - The operating point (stress level) to test
+    /// * `delta` - The perturbation size for the convexity test
+    /// * `epsilon` - Tolerance for considering values equal
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use antifragile::{Antifragile, Triad, TriadAnalysis};
+    ///
+    /// struct NearlyLinear;
+    /// impl Antifragile for NearlyLinear {
+    ///     type Stressor = f64;
+    ///     type Payoff = f64;
+    ///     fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+    ///         2.0 * x + 1e-10 * x * x  // Almost linear with tiny convexity
+    ///     }
+    /// }
+    ///
+    /// let system = NearlyLinear;
+    /// // Exact classification sees the tiny convexity
+    /// assert_eq!(system.classify(10.0, 1.0), Triad::Antifragile);
+    /// // With tolerance, it's effectively Robust
+    /// assert_eq!(system.classify_with_tolerance(10.0, 1.0, 1e-6), Triad::Robust);
+    /// ```
+    fn classify_with_tolerance(
+        &self,
+        at: Self::Stressor,
+        delta: Self::Stressor,
+        epsilon: Self::Payoff,
+    ) -> Triad
+    where
+        Self::Payoff: Sub<Output = Self::Payoff> + Default + PartialOrd,
+    {
+        let f_x = self.payoff(at);
+        let f_x_plus = self.payoff(at + delta);
+        let f_x_minus = self.payoff(at - delta);
+
+        let sum = f_x_plus + f_x_minus;
+        let twin_f_x = Self::twin(f_x);
+
+        // Compute absolute difference: |sum - twin_f_x|
+        let diff = if sum >= twin_f_x {
+            sum - twin_f_x
+        } else {
+            twin_f_x - sum
+        };
+
+        if diff <= epsilon {
+            Triad::Robust
+        } else if sum > twin_f_x {
+            Triad::Antifragile
+        } else {
+            Triad::Fragile
         }
     }
 
@@ -299,7 +385,7 @@ pub trait TriadAnalysis: Antifragile {
 impl<T: Antifragile> TriadAnalysis for T {}
 
 /// A wrapper that marks a system as verified on the Triad
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Verified<T> {
     inner: T,
@@ -360,6 +446,25 @@ where
     pub const fn is_robust(&self) -> bool {
         self.classification.is_robust()
     }
+
+    /// Re-verify classification at a new operating point
+    ///
+    /// Updates the stored classification by re-running the convexity test
+    /// at the specified operating point and delta.
+    #[inline]
+    pub fn re_verify(&mut self, at: T::Stressor, delta: T::Stressor) {
+        self.classification = self.inner.classify(at, delta);
+    }
+
+    /// Check if the classification still holds at a different operating point
+    ///
+    /// Returns `true` if classifying at the new point yields the same result
+    /// as the stored classification.
+    #[inline]
+    #[must_use]
+    pub fn still_holds(&self, at: T::Stressor, delta: T::Stressor) -> bool {
+        self.inner.classify(at, delta) == self.classification
+    }
 }
 
 impl<T> AsRef<T> for Verified<T> {
@@ -375,6 +480,19 @@ impl<T> core::ops::Deref for Verified<T> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.inner
+    }
+}
+
+impl<T: Antifragile + Default> Default for Verified<T>
+where
+    T::Stressor: Default,
+    T::Payoff: Sub<Output = T::Payoff> + Default + PartialOrd,
+{
+    /// Creates a verified system using `T::default()` classified at the default stressor
+    fn default() -> Self {
+        let system = T::default();
+        let at = T::Stressor::default();
+        Self::check(system, at, at)
     }
 }
 

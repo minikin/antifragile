@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CI](https://github.com/minikin/antifragile/actions/workflows/ci.yml/badge.svg)](https://github.com/minikin/antifragile/actions/workflows/ci.yml)
 
-A Rust library implementing [Nassim Nicholas Taleb's](https://en.wikipedia.org/wiki/Nassim_Nicholas_Taleb) [antifragility theory](https://en.wikipedia.org/wiki/Antifragile).
+A Rust library attempting to implement [Nassim Nicholas Taleb's](https://en.wikipedia.org/wiki/Nassim_Nicholas_Taleb) [antifragility theory](https://en.wikipedia.org/wiki/Antifragile).
 
 ## Overview
 

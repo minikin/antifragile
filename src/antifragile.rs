@@ -1,3 +1,31 @@
+//! # Core types and traits for antifragility analysis
+//!
+//! This module provides the foundational types for analyzing system responses to stress.
+//!
+//! ## Example: Analyzing a Portfolio
+//!
+//! ```rust
+//! use antifragile::{Antifragile, TriadAnalysis, Triad};
+//!
+//! struct OptionsPortfolio {
+//!     // Long volatility position
+//!     vega_exposure: f64,
+//! }
+//!
+//! impl Antifragile for OptionsPortfolio {
+//!     type Stressor = f64;  // Market volatility
+//!     type Payoff = f64;    // Portfolio P&L
+//!
+//!     fn payoff(&self, volatility: f64) -> f64 {
+//!         // Options gain from volatility (convex payoff)
+//!         self.vega_exposure * volatility * volatility
+//!     }
+//! }
+//!
+//! let portfolio = OptionsPortfolio { vega_exposure: 1.0 };
+//! assert!(portfolio.is_antifragile(0.2, 0.05));
+//! ```
+
 use core::cmp::Ordering;
 use core::fmt::Display;
 use core::ops::{Add, Sub};

@@ -762,4 +762,242 @@ mod tests {
         assert_eq!(all, vec![Triad::Fragile, Triad::Robust, Triad::Antifragile]);
         assert_eq!(Triad::ALL.len(), 3);
     }
+
+    #[test]
+    fn test_classify_with_tolerance_returns_antifragile() {
+        let system = ConvexFn;
+        let result = system.classify_with_tolerance(10.0, 1.0, 1e-10);
+        assert_eq!(result, Triad::Antifragile);
+    }
+
+    #[test]
+    fn test_classify_with_tolerance_returns_fragile() {
+        let system = ConcaveFn;
+        let result = system.classify_with_tolerance(10.0, 1.0, 1e-10);
+        assert_eq!(result, Triad::Fragile);
+    }
+
+    #[test]
+    fn test_classify_with_tolerance_boundary() {
+        // Create a system with known convexity
+        let convex = ConvexFn;
+
+        // At x=10, delta=1:
+        // f(9) = 81, f(10) = 100, f(11) = 121
+        // sum = 81 + 121 = 202
+        // twin = 200
+        // diff = 202 - 200 = 2
+
+        // With epsilon = 1, diff (2) > epsilon, so Antifragile
+        assert_eq!(
+            convex.classify_with_tolerance(10.0, 1.0, 1.0),
+            Triad::Antifragile
+        );
+
+        // With epsilon = 2, diff (2) <= epsilon, so Robust
+        assert_eq!(
+            convex.classify_with_tolerance(10.0, 1.0, 2.0),
+            Triad::Robust
+        );
+
+        // With epsilon = 3, diff (2) <= epsilon, so Robust
+        assert_eq!(
+            convex.classify_with_tolerance(10.0, 1.0, 3.0),
+            Triad::Robust
+        );
+    }
+
+    #[test]
+    fn test_classify_with_tolerance_fragile_boundary() {
+        // Test that fragile systems are correctly identified with tolerance
+        let concave = ConcaveFn;
+
+        // With very small epsilon, should be Fragile
+        assert_eq!(
+            concave.classify_with_tolerance(10.0, 1.0, 1e-10),
+            Triad::Fragile
+        );
+
+        // With large epsilon, should be Robust (within tolerance)
+        assert_eq!(
+            concave.classify_with_tolerance(10.0, 1.0, 10.0),
+            Triad::Robust
+        );
+    }
+
+    #[test]
+    fn test_is_antifragile_returns_false() {
+        let linear = LinearFn {
+            slope: 1.0,
+            intercept: 0.0,
+        };
+        assert!(!linear.is_antifragile(10.0, 1.0));
+
+        let concave = ConcaveFn;
+        assert!(!concave.is_antifragile(10.0, 1.0));
+    }
+
+    #[test]
+    fn test_gains_from_stress_returns_false() {
+        // Test a system where higher stress leads to LOWER payoff
+        struct DecreasingSystem;
+        impl Antifragile for DecreasingSystem {
+            type Stressor = f64;
+            type Payoff = f64;
+            fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+                -x // Decreasing function
+            }
+        }
+
+        let system = DecreasingSystem;
+        assert!(!system.gains_from_stress(1.0, 2.0)); // -1 > -2 is false
+    }
+
+    #[test]
+    fn test_gains_from_stress_boundary() {
+        // When payoffs are equal, should return false (not strictly gaining)
+        struct ConstantSystem;
+        impl Antifragile for ConstantSystem {
+            type Stressor = f64;
+            type Payoff = f64;
+            fn payoff(&self, _x: Self::Stressor) -> Self::Payoff {
+                5.0
+            }
+        }
+
+        let system = ConstantSystem;
+        assert!(!system.gains_from_stress(1.0, 2.0)); // 5 > 5 is false
+    }
+
+    #[test]
+    fn test_is_stable_returns_false() {
+        let convex = ConvexFn;
+        // f(1) = 1, f(10) = 100, diff = 99 > threshold of 1
+        assert!(!convex.is_stable(1.0, 10.0, 1.0));
+    }
+
+    #[test]
+    fn test_is_stable_boundary_conditions() {
+        struct KnownSystem;
+        impl Antifragile for KnownSystem {
+            type Stressor = f64;
+            type Payoff = f64;
+            fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+                x * 2.0 // payoff(5) = 10, payoff(10) = 20
+            }
+        }
+
+        let system = KnownSystem;
+
+        // diff = |20 - 10| = 10
+        // threshold = 10: diff <= threshold, so stable
+        assert!(system.is_stable(5.0, 10.0, 10.0));
+
+        // threshold = 9: diff > threshold, so not stable
+        assert!(!system.is_stable(5.0, 10.0, 9.0));
+
+        // Test with reversed order (low > high)
+        // payoff(10) = 20, payoff(5) = 10, diff = |10 - 20| = 10
+        assert!(system.is_stable(10.0, 5.0, 10.0));
+        assert!(!system.is_stable(10.0, 5.0, 9.0));
+    }
+
+    #[test]
+    fn test_verified_is_fragile_returns_true() {
+        let concave = ConcaveFn;
+        let verified = Verified::check(concave, 10.0, 1.0);
+        assert!(verified.is_fragile());
+        assert!(!verified.is_antifragile());
+        assert!(!verified.is_robust());
+    }
+
+    #[test]
+    fn test_verified_is_robust_returns_true() {
+        let linear = LinearFn {
+            slope: 2.0,
+            intercept: 5.0,
+        };
+        let verified = Verified::check(linear, 10.0, 1.0);
+        assert!(verified.is_robust());
+        assert!(!verified.is_antifragile());
+        assert!(!verified.is_fragile());
+    }
+
+    #[test]
+    fn test_verified_is_antifragile_returns_false() {
+        let concave = ConcaveFn;
+        let verified = Verified::check(concave, 10.0, 1.0);
+        assert!(!verified.is_antifragile());
+
+        let linear = LinearFn {
+            slope: 1.0,
+            intercept: 0.0,
+        };
+        let verified = Verified::check(linear, 10.0, 1.0);
+        assert!(!verified.is_antifragile());
+    }
+
+    #[test]
+    fn test_verified_re_verify_changes_classification() {
+        // System that changes classification based on operating point
+        struct VariableSystem;
+        impl Antifragile for VariableSystem {
+            type Stressor = f64;
+            type Payoff = f64;
+            fn payoff(&self, x: Self::Stressor) -> Self::Payoff {
+                if x > 0.0 {
+                    x * x // Convex for positive x
+                } else {
+                    x.abs().sqrt() // Concave for negative x (using abs)
+                }
+            }
+        }
+
+        let system = VariableSystem;
+        let mut verified = Verified::check(system, 10.0, 1.0);
+        assert_eq!(verified.classification(), Triad::Antifragile);
+
+        // Re-verify at a point where it's robust (zero delta)
+        verified.re_verify(10.0, 0.0);
+        assert_eq!(verified.classification(), Triad::Robust);
+    }
+
+    #[test]
+    fn test_verified_still_holds_returns_false() {
+        let convex = ConvexFn;
+        let verified = Verified::check(convex, 10.0, 1.0);
+        assert_eq!(verified.classification(), Triad::Antifragile);
+
+        // At delta = 0, classification changes to Robust
+        assert!(!verified.still_holds(10.0, 0.0));
+    }
+
+    #[test]
+    fn test_verified_still_holds_returns_true() {
+        let convex = ConvexFn;
+        let verified = Verified::check(convex, 10.0, 1.0);
+
+        // At a different point with same delta, should still be Antifragile
+        assert!(verified.still_holds(5.0, 1.0));
+        assert!(verified.still_holds(20.0, 2.0));
+    }
+
+    #[test]
+    fn test_classify_with_tolerance_exact_boundary() {
+        // When sum == twin_f_x exactly (linear function) and epsilon < 0,
+        // the diff (0) > epsilon check passes, so we reach the sum > twin_f_x check.
+        // A linear function should return Fragile (since sum is not > twin),
+        // not Antifragile (which the >= mutation would cause).
+        let linear = LinearFn {
+            slope: 2.0,
+            intercept: 5.0,
+        };
+
+        // For linear: f(x-d) + f(x+d) = 2*f(x) exactly, so sum == twin_f_x
+        // With negative epsilon, diff (0) <= epsilon (-1) is false
+        // So we reach: if sum > twin_f_x (false for linear) -> else Fragile
+        // Mutation would make it: if sum >= twin_f_x (true) -> Antifragile (wrong!)
+        let result = linear.classify_with_tolerance(10.0, 1.0, -1.0);
+        assert_eq!(result, Triad::Fragile);
+    }
 }

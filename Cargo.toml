@@ -11,12 +11,16 @@ homepage = "https://github.com/minikin/antifragile"
 keywords = [
     "antifragile",
     "antifragility",
+    "convexity",
     "fragile",
+    "resilience",
+    "risk-analysis",
     "robust",
     "stress",
+    "taleb",
     "volatility",
 ]
-categories = ["data-structures", "encoding", "rust-patterns", "algorithms"]
+categories = ["mathematics", "science", "finance", "simulation"]
 readme = "README.md"
 exclude = ["internal/", ".github/", "target/"]
 

@@ -8,18 +8,7 @@ description = "Antifragile is a Rust library implementing concepts from Nassim N
 license = "MIT"
 repository = "https://github.com/minikin/antifragile"
 homepage = "https://github.com/minikin/antifragile"
-keywords = [
-    "antifragile",
-    "antifragility",
-    "convexity",
-    "fragile",
-    "resilience",
-    "risk-analysis",
-    "robust",
-    "stress",
-    "taleb",
-    "volatility",
-]
+keywords = ["antifragile", "convexity", "fragile", "resilience", "volatility"]
 categories = ["mathematics", "science", "finance", "simulation"]
 readme = "README.md"
 exclude = ["internal/", ".github/", "target/"]

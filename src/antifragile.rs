@@ -263,6 +263,7 @@ pub trait TriadAnalysis: Antifragile {
     /// # Note
     /// This uses exact comparison. For floating-point payoffs where exact
     /// equality is unlikely, use [`classify_with_tolerance`](Self::classify_with_tolerance).
+    #[inline]
     fn classify(&self, at: Self::Stressor, delta: Self::Stressor) -> Triad
     where
         Self::Payoff: Sub<Output = Self::Payoff> + Default + PartialOrd,
@@ -314,6 +315,7 @@ pub trait TriadAnalysis: Antifragile {
     /// // With tolerance, it's effectively Robust
     /// assert_eq!(system.classify_with_tolerance(10.0, 1.0, 1e-6), Triad::Robust);
     /// ```
+    #[inline]
     fn classify_with_tolerance(
         &self,
         at: Self::Stressor,
@@ -347,6 +349,7 @@ pub trait TriadAnalysis: Antifragile {
     }
 
     /// Check if system is antifragile at a given point (convexity test)
+    #[inline]
     #[must_use]
     fn is_antifragile(&self, at: Self::Stressor, delta: Self::Stressor) -> bool
     where
@@ -362,6 +365,7 @@ pub trait TriadAnalysis: Antifragile {
     ///
     /// This is useful for learning systems where payoff improves
     /// with exposure, even if mathematically concave.
+    #[inline]
     #[must_use]
     fn gains_from_stress(&self, low: Self::Stressor, high: Self::Stressor) -> bool {
         self.payoff(high) > self.payoff(low)
@@ -391,6 +395,7 @@ pub trait TriadAnalysis: Antifragile {
     /// let system = ConstantSystem;
     /// assert!(system.is_stable(1.0, 100.0, 0.001));
     /// ```
+    #[inline]
     #[must_use]
     fn is_stable(&self, low: Self::Stressor, high: Self::Stressor, threshold: Self::Payoff) -> bool
     where

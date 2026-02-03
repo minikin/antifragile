@@ -62,6 +62,7 @@ async fn main() {
             get(move || std::future::ready(metrics_handle.render())),
         )
         .route("/antifragile/status", get(antifragile_status))
+        .route("/antifragile/curve", get(antifragile_curve))
         .route("/antifragile/history", get(antifragile_history))
         .route("/cache/stats", get(cache_stats))
         .layer(TraceLayer::new_for_http())
@@ -152,17 +153,17 @@ pub struct CurrentMetrics {
 
 #[derive(Debug, Serialize)]
 pub struct ConvexityAnalysis {
-    pub is_convex: bool,
+    pub exponent: f64,
+    pub curve_shape: String,
     pub explanation: String,
 }
 
 /// Get current antifragile classification
 async fn antifragile_status(State(state): State<Arc<AppState>>) -> Json<AntifragileStatusResponse> {
-    use antifragile::{Triad, TriadAnalysis};
+    use antifragile::Triad;
 
     let stats = state.metrics.get_stats();
 
-    // Create a snapshot for analysis
     let snapshot = metrics::ServiceSnapshot {
         total_requests: stats.total_requests,
         cache_hits: stats.cache_hits,
@@ -170,26 +171,21 @@ async fn antifragile_status(State(state): State<Arc<AppState>>) -> Json<Antifrag
         avg_response_time_ms: stats.avg_response_time_ms,
     };
 
-    // Classify the system
-    // We use normalized load as the stressor (requests_per_second / 100)
-    // The payoff model is convex: capacity grows superlinearly with load due to cache warming
-    let normalized_load = (stats.requests_per_second / 100.0).max(0.1);
-    let classification = snapshot.classify(normalized_load, 0.1);
+    let exponent = snapshot.exponent();
 
-    let is_convex = classification == Triad::Antifragile;
+    // Classify based on exponent (more reliable than numerical convexity test)
+    let (classification, curve_shape) = if exponent < 0.95 {
+        (Triad::Fragile, "concave")
+    } else if exponent > 1.05 {
+        (Triad::Antifragile, "convex")
+    } else {
+        (Triad::Robust, "linear")
+    };
+
     let explanation = match classification {
-        Triad::Antifragile => {
-            "System exhibits convex behavior: throughput efficiency improves with load \
-             as cache warms up. The system benefits from stress."
-        }
-        Triad::Robust => {
-            "System exhibits linear behavior: throughput scales proportionally with load. \
-             The system is resilient but doesn't gain from stress."
-        }
-        Triad::Fragile => {
-            "System exhibits concave behavior: throughput degrades under load. \
-             The system is harmed by stress."
-        }
+        Triad::Antifragile => "Cache is hot. System benefits from stress.",
+        Triad::Robust => "Cache is warming. System scales proportionally.",
+        Triad::Fragile => "Cache is cold. System degrades under load.",
     };
 
     Json(AntifragileStatusResponse {
@@ -203,9 +199,56 @@ async fn antifragile_status(State(state): State<Arc<AppState>>) -> Json<Antifrag
             requests_per_second: stats.requests_per_second,
         },
         analysis: ConvexityAnalysis {
-            is_convex,
+            exponent,
+            curve_shape: curve_shape.to_string(),
             explanation: explanation.to_string(),
         },
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct CurveResponse {
+    pub exponent: f64,
+    pub curve_shape: String,
+    pub points: Vec<CurvePoint>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CurvePoint {
+    pub load: f64,
+    pub payoff: f64,
+}
+
+async fn antifragile_curve(State(state): State<Arc<AppState>>) -> Json<CurveResponse> {
+    let stats = state.metrics.get_stats();
+
+    let snapshot = metrics::ServiceSnapshot {
+        total_requests: stats.total_requests,
+        cache_hits: stats.cache_hits,
+        cache_misses: stats.cache_misses,
+        avg_response_time_ms: stats.avg_response_time_ms,
+    };
+
+    let exponent = snapshot.exponent();
+    let curve_shape = if exponent < 0.95 {
+        "concave (Fragile)"
+    } else if exponent > 1.05 {
+        "convex (Antifragile)"
+    } else {
+        "linear (Robust)"
+    }
+    .to_string();
+
+    let points: Vec<CurvePoint> = snapshot
+        .curve_data(20)
+        .into_iter()
+        .map(|(load, payoff)| CurvePoint { load, payoff })
+        .collect();
+
+    Json(CurveResponse {
+        exponent,
+        curve_shape,
+        points,
     })
 }
 

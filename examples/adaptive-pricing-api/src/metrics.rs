@@ -78,6 +78,25 @@ impl ServiceMetrics {
         gauge!("pricing_cache_hit_ratio").set(stats.cache_hit_rate);
         gauge!("pricing_avg_response_time_ms").set(stats.avg_response_time_ms);
 
+        // Export antifragile status metrics
+        let snapshot = ServiceSnapshot {
+            total_requests: stats.total_requests,
+            cache_hits: stats.cache_hits,
+            cache_misses: stats.cache_misses,
+            avg_response_time_ms: stats.avg_response_time_ms,
+        };
+        let exponent = snapshot.exponent();
+        gauge!("antifragile_exponent").set(exponent);
+        // Classification rank: 0=Fragile, 1=Robust, 2=Antifragile
+        let rank = if exponent < 0.95 {
+            0.0
+        } else if exponent > 1.05 {
+            2.0
+        } else {
+            1.0
+        };
+        gauge!("antifragile_classification_rank").set(rank);
+
         if count % 100 == 0 {
             self.record_history_entry();
         }
@@ -129,8 +148,6 @@ impl ServiceMetrics {
     }
 
     fn record_history_entry(&self) {
-        use antifragile::TriadAnalysis;
-
         let stats = self.get_stats();
 
         let snapshot = ServiceSnapshot {
@@ -140,9 +157,15 @@ impl ServiceMetrics {
             avg_response_time_ms: stats.avg_response_time_ms,
         };
 
-        // Use normalized load (requests_per_second / 100) as stressor
-        let normalized_load = (stats.requests_per_second / 100.0).max(0.1);
-        let classification = snapshot.classify(normalized_load, 0.1);
+        // Classify based on exponent
+        let exponent = snapshot.exponent();
+        let classification = if exponent < 0.95 {
+            antifragile::Triad::Fragile
+        } else if exponent > 1.05 {
+            antifragile::Triad::Antifragile
+        } else {
+            antifragile::Triad::Robust
+        };
 
         let entry = HistoryEntry {
             timestamp: Utc::now(),
@@ -181,8 +204,10 @@ impl Default for ServiceMetrics {
 /// - cache_hit_rate: measures how well the cache is working
 /// - avg_response_time_ms: measures actual request cost
 ///
-/// The model: As load increases, cache warms up, hit rate improves,
-/// and effective capacity grows faster than load (convex/antifragile).
+/// The model reflects actual system behavior at different cache states:
+/// - Cold cache (low hit rate): concave curve → Fragile
+/// - Warming cache (medium hit rate): linear curve → Robust
+/// - Hot cache (high hit rate): convex curve → Antifragile
 impl Antifragile for ServiceSnapshot {
     type Stressor = f64; // Load level (normalized)
     type Payoff = f64; // Effective throughput capacity
@@ -190,43 +215,58 @@ impl Antifragile for ServiceSnapshot {
     fn payoff(&self, load: Self::Stressor) -> Self::Payoff {
         // Effective throughput capacity based on actual system metrics
         //
-        // The model uses a convex (superlinear) relationship calibrated by observed data:
-        //   payoff = base_throughput * efficiency_factor * load^exponent
+        // payoff = base_throughput * efficiency_factor * load^exponent
         //
-        // Where:
-        // - base_throughput: derived from actual response time
-        // - efficiency_factor: derived from actual cache hit rate
-        // - exponent > 1: creates convexity, calibrated by cache effectiveness
+        // The exponent determines curve shape and classification:
+        //   < 1.0: concave (Fragile) - system degrades under load
+        //   = 1.0: linear (Robust) - system scales proportionally
+        //   > 1.0: convex (Antifragile) - system improves under load
 
-        // Clamp load to small positive value for continuity
         let load = load.abs().max(0.001);
 
-        // Derive efficiency from actual metrics
         let observed_hit_rate = if self.total_requests > 0 {
             self.cache_hits as f64 / self.total_requests as f64
         } else {
-            0.5 // Assume 50% if no data
+            0.0 // No data = cold cache
         };
 
-        // Base throughput from actual response time (requests/sec capacity)
         let base_throughput = if self.avg_response_time_ms > 0.001 {
             1000.0 / self.avg_response_time_ms
         } else {
-            10000.0 // Cap if response time is negligible
+            10000.0
         };
 
-        // Efficiency multiplier: higher cache hit rate = more efficient system
-        // Range: 1.0 (0% hits) to 2.0 (100% hits)
         let efficiency_factor = 1.0 + observed_hit_rate;
 
-        // Convexity exponent calibrated by cache effectiveness
-        // Higher hit rate indicates cache is working well → stronger convexity
-        // Range: 1.1 (poor caching) to 1.5 (excellent caching)
-        let convexity_exponent = 1.1 + observed_hit_rate * 0.4;
+        // Exponent maps hit rate to curve shape:
+        //   0% hit rate → 0.7 (concave/Fragile)
+        //  50% hit rate → 1.0 (linear/Robust)
+        // 100% hit rate → 1.3 (convex/Antifragile)
+        let exponent = 0.7 + observed_hit_rate * 0.6;
 
-        // Effective throughput: grows superlinearly with load
-        // The power function load^exponent (exponent > 1) guarantees convexity
-        base_throughput * efficiency_factor * load.powf(convexity_exponent)
+        base_throughput * efficiency_factor * load.powf(exponent)
+    }
+}
+
+impl ServiceSnapshot {
+    /// Get the current exponent value (for diagnostics)
+    pub fn exponent(&self) -> f64 {
+        let hit_rate = if self.total_requests > 0 {
+            self.cache_hits as f64 / self.total_requests as f64
+        } else {
+            0.0
+        };
+        0.7 + hit_rate * 0.6
+    }
+
+    /// Generate payoff curve data points for visualization
+    pub fn curve_data(&self, points: usize) -> Vec<(f64, f64)> {
+        (0..points)
+            .map(|i| {
+                let load = (i as f64 + 1.0) / points as f64;
+                (load, <Self as Antifragile>::payoff(self, load))
+            })
+            .collect()
     }
 }
 
@@ -240,85 +280,72 @@ pub fn setup_metrics_recorder() -> PrometheusHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use antifragile::TriadAnalysis;
+    use antifragile::Triad;
 
-    #[test]
-    fn test_service_snapshot_is_antifragile() {
-        let snapshot = ServiceSnapshot {
-            total_requests: 1000,
-            cache_hits: 800,
-            cache_misses: 200,
-            avg_response_time_ms: 2.0,
-        };
+    fn make_snapshot(hit_rate: f64) -> ServiceSnapshot {
+        let total = 1000;
+        let hits = (total as f64 * hit_rate) as u64;
+        ServiceSnapshot {
+            total_requests: total,
+            cache_hits: hits,
+            cache_misses: total - hits,
+            avg_response_time_ms: 1.0,
+        }
+    }
 
-        // Test that payoff increases with cache hit rate (convex behavior)
-        let payoff_low = snapshot.payoff(0.2);
-        let payoff_mid = snapshot.payoff(0.5);
-        let payoff_high = snapshot.payoff(0.8);
-
-        // Efficiency should increase with cache hit rate
-        assert!(payoff_high > payoff_mid);
-        assert!(payoff_mid > payoff_low);
-
-        // The system should classify as antifragile at moderate hit rates
-        let classification = snapshot.classify(0.5, 0.1);
-        assert_eq!(classification, antifragile::Triad::Antifragile);
+    fn classify_snapshot(snapshot: &ServiceSnapshot) -> Triad {
+        let exponent = snapshot.exponent();
+        if exponent < 0.95 {
+            Triad::Fragile
+        } else if exponent > 1.05 {
+            Triad::Antifragile
+        } else {
+            Triad::Robust
+        }
     }
 
     #[test]
-    fn test_convexity() {
-        let snapshot = ServiceSnapshot {
-            total_requests: 1000,
-            cache_hits: 800,
-            cache_misses: 200,
-            avg_response_time_ms: 2.0,
-        };
-
-        // Convexity test: f(x+d) + f(x-d) > 2*f(x)
-        let x = 0.5;
-        let d = 0.2;
-
-        let f_x = snapshot.payoff(x);
-        let f_x_plus = snapshot.payoff(x + d);
-        let f_x_minus = snapshot.payoff(x - d);
-
-        let sum = f_x_plus + f_x_minus;
-        let twin = 2.0 * f_x;
-
-        // For an antifragile system, sum > twin (convex)
-        assert!(
-            sum > twin,
-            "Expected convex behavior: {} + {} = {} > {} = 2 * {}",
-            f_x_plus,
-            f_x_minus,
-            sum,
-            twin,
-            f_x
-        );
+    fn test_cold_cache_is_fragile() {
+        // 10% hit rate → exponent = 0.76 (concave)
+        let snapshot = make_snapshot(0.1);
+        assert!(snapshot.exponent() < 1.0, "Low hit rate should have exponent < 1");
+        assert_eq!(classify_snapshot(&snapshot), Triad::Fragile);
     }
 
     #[test]
-    fn test_convexity_at_high_cache_hit_rate() {
-        // Test with high cache hit rate (typical under load)
-        let snapshot = ServiceSnapshot {
-            total_requests: 500,
-            cache_hits: 487, // 97.4% hit rate
-            cache_misses: 13,
-            avg_response_time_ms: 0.31,
-        };
+    fn test_warming_cache_is_robust() {
+        // 50% hit rate → exponent = 1.0 (linear)
+        let snapshot = make_snapshot(0.5);
+        let exp = snapshot.exponent();
+        assert!((exp - 1.0).abs() < 0.05, "Medium hit rate should have exponent ≈ 1.0");
+        assert_eq!(classify_snapshot(&snapshot), Triad::Robust);
+    }
 
-        // Verify convexity at low normalized load (API typical values)
-        let x = 0.1;
-        let d = 0.1;
+    #[test]
+    fn test_hot_cache_is_antifragile() {
+        // 90% hit rate → exponent = 1.24 (convex)
+        let snapshot = make_snapshot(0.9);
+        assert!(snapshot.exponent() > 1.0, "High hit rate should have exponent > 1");
+        assert_eq!(classify_snapshot(&snapshot), Triad::Antifragile);
+    }
 
-        let f_x_minus = snapshot.payoff(x - d);
-        let f_x = snapshot.payoff(x);
-        let f_x_plus = snapshot.payoff(x + d);
+    #[test]
+    fn test_exponent_range() {
+        // Verify exponent maps correctly across hit rate range
+        assert!((make_snapshot(0.0).exponent() - 0.7).abs() < 0.01);
+        assert!((make_snapshot(0.5).exponent() - 1.0).abs() < 0.01);
+        assert!((make_snapshot(1.0).exponent() - 1.3).abs() < 0.01);
+    }
 
-        let sum = f_x_plus + f_x_minus;
-        let twin = 2.0 * f_x;
+    #[test]
+    fn test_curve_data() {
+        let snapshot = make_snapshot(0.8);
+        let curve = snapshot.curve_data(10);
 
-        assert!(sum > twin, "Expected convex behavior at high hit rate");
-        assert_eq!(snapshot.classify(x, d), antifragile::Triad::Antifragile);
+        assert_eq!(curve.len(), 10);
+        // Payoff should increase with load
+        for i in 1..curve.len() {
+            assert!(curve[i].1 > curve[i - 1].1, "Payoff should increase with load");
+        }
     }
 }

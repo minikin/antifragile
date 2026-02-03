@@ -1,61 +1,40 @@
 # Adaptive Pricing API
 
-Demonstrates antifragile behavior: the system becomes MORE efficient under load due to adaptive caching.
+Demonstrates the Fragile → Robust → Antifragile transition as the cache warms up.
 
 ## Quick Start
 
 ```bash
-# Start services
+# Start services and run load test
+docker compose --profile loadtest up
+
+# Or start services only, then run load test separately
 docker compose up -d
-
-# Open Grafana dashboard
-open http://localhost:3001  # admin / antifragile
-
-# Run load test
 docker compose --profile loadtest up loadtest
 ```
 
-## Services
+Open Grafana at http://localhost:3001 (admin / antifragile) to watch metrics.
 
-| Service    | URL                   |
-| ---------- | --------------------- |
-| API        | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
-| Grafana    | http://localhost:3001 |
+## The Transition
 
-## API Endpoints
+| Phase | Requests | Hit Rate | Exponent | Classification |
+| ----- | -------- | -------- | -------- | -------------- |
+| 1     | Unique   | ~0%      | 0.70     | Fragile        |
+| 2     | Mixed    | ~50%     | 1.00     | Robust         |
+| 3     | Repeated | ~80%     | 1.18     | Antifragile    |
+
+The exponent determines curve shape: `exponent = 0.7 + hit_rate × 0.6`
+
+## API
 
 ```bash
-# Calculate price
 curl -X POST http://localhost:3000/price \
   -H "Content-Type: application/json" \
-  -d '{"product_id": "widget-001", "quantity": 100}'
+  -d '{"product_id": "widget", "quantity": 10}'
 
-# Check antifragile status
 curl http://localhost:3000/antifragile/status
-
-# Other endpoints
-GET /health
-GET /metrics
-GET /cache/stats
-GET /antifragile/history
+curl http://localhost:3000/antifragile/curve
 ```
-
-## How It Works
-
-The payoff function uses actual metrics to determine convexity:
-
-```
-payoff = base_throughput × efficiency_factor × load^exponent
-```
-
-| Parameter           | Source                        |
-| ------------------- | ----------------------------- |
-| `base_throughput`   | `1000 / avg_response_time_ms` |
-| `efficiency_factor` | `1 + cache_hit_rate`          |
-| `exponent`          | `1.1 + cache_hit_rate × 0.4`  |
-
-The exponent > 1 guarantees convexity. Higher cache hit rates produce stronger convexity, reflecting that effective caching creates superlinear benefits under load.
 
 ## Cleanup
 

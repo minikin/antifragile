@@ -4,16 +4,21 @@ WORKDIR /build
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
+# Copy manifests and create dummy sources to cache dependency builds
 COPY Cargo.toml /build/antifragile/Cargo.toml
-COPY src /build/antifragile/src
+RUN mkdir -p /build/antifragile/src && echo "pub trait Antifragile {}" > /build/antifragile/src/lib.rs
 
 COPY examples/adaptive-pricing-api/Cargo.toml /build/example/Cargo.toml
-COPY examples/adaptive-pricing-api/src /build/example/src
+RUN mkdir -p /build/example/src && echo "fn main() {}" > /build/example/src/main.rs
 
 WORKDIR /build/example
 RUN sed -i 's|path = "../../"|path = "/build/antifragile"|' Cargo.toml
+RUN cargo build --release || true
 
-RUN cargo build --release
+# Copy real source and rebuild (only this layer reruns on code changes)
+COPY src /build/antifragile/src
+COPY examples/adaptive-pricing-api/src /build/example/src
+RUN touch /build/antifragile/src/lib.rs /build/example/src/main.rs && cargo build --release
 
 FROM debian:bookworm-slim
 

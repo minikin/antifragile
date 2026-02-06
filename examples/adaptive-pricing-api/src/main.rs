@@ -117,7 +117,7 @@ async fn calculate_price_handler(
         (cached, true)
     } else {
         state.metrics.record_cache_miss();
-        let result = calculate_price(&query);
+        let result = calculate_price(&query).await;
         state.cache.insert(query, result.clone());
         (result, false)
     };

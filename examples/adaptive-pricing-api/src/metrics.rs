@@ -3,7 +3,6 @@
 //! This module tracks service metrics and implements the Antifragile trait
 //! to analyze system behavior under load.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use antifragile::Antifragile;
@@ -12,14 +11,20 @@ use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use parking_lot::RwLock;
 
+/// Raw counters protected by a single lock for snapshot-consistent reads
+#[derive(Debug, Clone)]
+struct Counters {
+    total_requests: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    total_response_time_us: u64,
+}
+
 /// Service metrics collector
 pub struct ServiceMetrics {
-    total_requests: AtomicU64,
-    cache_hits: AtomicU64,
-    cache_misses: AtomicU64,
-    total_response_time_us: AtomicU64,
+    counters: RwLock<Counters>,
     history: RwLock<Vec<HistoryEntry>>,
-    last_snapshot_time: RwLock<std::time::Instant>,
+    start_time: std::time::Instant,
 }
 
 /// A point-in-time snapshot of service metrics
@@ -56,20 +61,24 @@ pub struct ServiceStats {
 impl ServiceMetrics {
     pub fn new() -> Self {
         Self {
-            total_requests: AtomicU64::new(0),
-            cache_hits: AtomicU64::new(0),
-            cache_misses: AtomicU64::new(0),
-            total_response_time_us: AtomicU64::new(0),
+            counters: RwLock::new(Counters {
+                total_requests: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                total_response_time_us: 0,
+            }),
             history: RwLock::new(Vec::new()),
-            last_snapshot_time: RwLock::new(std::time::Instant::now()),
+            start_time: std::time::Instant::now(),
         }
     }
 
     pub fn record_request(&self, duration: Duration) {
-        let count = self.total_requests.fetch_add(1, Ordering::Relaxed) + 1;
-        let duration_us = duration.as_micros() as u64;
-        self.total_response_time_us
-            .fetch_add(duration_us, Ordering::Relaxed);
+        let count = {
+            let mut c = self.counters.write();
+            c.total_requests += 1;
+            c.total_response_time_us += duration.as_micros() as u64;
+            c.total_requests
+        };
 
         counter!("pricing_requests_total").increment(1);
         histogram!("pricing_response_time_seconds").record(duration.as_secs_f64());
@@ -103,44 +112,42 @@ impl ServiceMetrics {
     }
 
     pub fn record_cache_hit(&self) {
-        self.cache_hits.fetch_add(1, Ordering::Relaxed);
+        self.counters.write().cache_hits += 1;
         counter!("pricing_cache_hits_total").increment(1);
     }
 
     pub fn record_cache_miss(&self) {
-        self.cache_misses.fetch_add(1, Ordering::Relaxed);
+        self.counters.write().cache_misses += 1;
         counter!("pricing_cache_misses_total").increment(1);
     }
 
     pub fn get_stats(&self) -> ServiceStats {
-        let total_requests = self.total_requests.load(Ordering::Relaxed);
-        let cache_hits = self.cache_hits.load(Ordering::Relaxed);
-        let cache_misses = self.cache_misses.load(Ordering::Relaxed);
-        let total_response_time_us = self.total_response_time_us.load(Ordering::Relaxed);
+        let c = self.counters.read();
 
-        let cache_hit_rate = if total_requests > 0 {
-            cache_hits as f64 / total_requests as f64
+        let cache_total = c.cache_hits + c.cache_misses;
+        let cache_hit_rate = if cache_total > 0 {
+            c.cache_hits as f64 / cache_total as f64
         } else {
             0.0
         };
 
-        let avg_response_time_ms = if total_requests > 0 {
-            (total_response_time_us as f64 / total_requests as f64) / 1000.0
+        let avg_response_time_ms = if c.total_requests > 0 {
+            (c.total_response_time_us as f64 / c.total_requests as f64) / 1000.0
         } else {
             0.0
         };
 
-        let elapsed = self.last_snapshot_time.read().elapsed().as_secs_f64();
+        let elapsed = self.start_time.elapsed().as_secs_f64();
         let requests_per_second = if elapsed > 0.0 {
-            total_requests as f64 / elapsed
+            c.total_requests as f64 / elapsed
         } else {
             0.0
         };
 
         ServiceStats {
-            total_requests,
-            cache_hits,
-            cache_misses,
+            total_requests: c.total_requests,
+            cache_hits: c.cache_hits,
+            cache_misses: c.cache_misses,
             cache_hit_rate,
             avg_response_time_ms,
             requests_per_second,

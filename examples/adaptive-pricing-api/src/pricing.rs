@@ -3,35 +3,22 @@
 //! This module simulates complex pricing calculations that benefit from caching.
 
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
-use std::thread;
+use std::hash::Hash;
 use std::time::Duration;
 
 /// A price query representing a product configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PriceQuery {
     pub product_id: String,
     pub quantity: u32,
     pub options: Vec<String>,
 }
 
-impl PartialEq for PriceQuery {
-    fn eq(&self, other: &Self) -> bool {
-        self.product_id == other.product_id
-            && self.quantity == other.quantity
-            && self.options == other.options
-    }
-}
-
-impl Eq for PriceQuery {}
-
-impl Hash for PriceQuery {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.product_id.hash(state);
-        self.quantity.hash(state);
-        for opt in &self.options {
-            opt.hash(state);
-        }
+impl PriceQuery {
+    /// Normalize the query so option order doesn't affect cache lookups
+    pub fn normalized(mut self) -> Self {
+        self.options.sort();
+        self
     }
 }
 
@@ -94,11 +81,11 @@ fn calculate_options_cost(options: &[String], base_price: f64) -> f64 {
 ///
 /// The key insight: when this is cached, the system becomes antifragile
 /// because repeated queries (higher load) result in faster responses.
-pub fn calculate_price(query: &PriceQuery) -> PriceResult {
+pub async fn calculate_price(query: &PriceQuery) -> PriceResult {
     // Simulate computation time (5-15ms)
     // In a real system, this might be database queries, API calls, etc.
     let computation_delay = Duration::from_millis(5 + (query.product_id.len() as u64 % 10));
-    thread::sleep(computation_delay);
+    tokio::time::sleep(computation_delay).await;
 
     let base_price = get_base_price(&query.product_id);
     let subtotal = base_price * query.quantity as f64;
@@ -122,40 +109,40 @@ pub fn calculate_price(query: &PriceQuery) -> PriceResult {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_base_pricing() {
+    #[tokio::test]
+    async fn test_base_pricing() {
         let query = PriceQuery {
             product_id: "widget-001".to_string(),
             quantity: 1,
             options: vec![],
         };
 
-        let result = calculate_price(&query);
+        let result = calculate_price(&query).await;
         assert!((result.total_price - 10.0).abs() < 0.01);
     }
 
-    #[test]
-    fn test_quantity_discount() {
+    #[tokio::test]
+    async fn test_quantity_discount() {
         let query = PriceQuery {
             product_id: "widget-001".to_string(),
             quantity: 100,
             options: vec![],
         };
 
-        let result = calculate_price(&query);
+        let result = calculate_price(&query).await;
         // 100 * $10 = $1000, 10% discount = $100 off = $900
         assert!((result.total_price - 900.0).abs() < 0.01);
     }
 
-    #[test]
-    fn test_options_pricing() {
+    #[tokio::test]
+    async fn test_options_pricing() {
         let query = PriceQuery {
             product_id: "widget-001".to_string(),
             quantity: 1,
             options: vec!["gift-wrap".to_string()],
         };
 
-        let result = calculate_price(&query);
+        let result = calculate_price(&query).await;
         // $10 base + $3 gift wrap = $13
         assert!((result.total_price - 13.0).abs() < 0.01);
     }

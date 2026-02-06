@@ -28,23 +28,28 @@ struct CacheEntry {
 pub struct AdaptiveCache {
     entries: DashMap<PriceQuery, CacheEntry>,
     ttl: Duration,
+    max_capacity: usize,
 }
 
 impl AdaptiveCache {
-    /// Create a new cache with default TTL of 5 minutes
+    const DEFAULT_MAX_CAPACITY: usize = 10_000;
+
+    /// Create a new cache with default TTL of 5 minutes and 10k entry cap
     pub fn new() -> Self {
         Self {
             entries: DashMap::new(),
             ttl: Duration::from_secs(300),
+            max_capacity: Self::DEFAULT_MAX_CAPACITY,
         }
     }
 
-    /// Create a new cache with custom TTL
+    /// Create a new cache with custom TTL and capacity
     #[allow(dead_code)]
-    pub fn with_ttl(ttl: Duration) -> Self {
+    pub fn with_ttl_and_capacity(ttl: Duration, max_capacity: usize) -> Self {
         Self {
             entries: DashMap::new(),
             ttl,
+            max_capacity,
         }
     }
 
@@ -63,8 +68,17 @@ impl AdaptiveCache {
         None
     }
 
-    /// Insert a new entry into the cache
+    /// Insert a new entry into the cache, evicting stale or oldest entries if at capacity
     pub fn insert(&self, query: PriceQuery, result: PriceResult) {
+        if self.entries.len() >= self.max_capacity {
+            self.cleanup();
+        }
+
+        // If still at capacity after cleanup, evict the oldest entry
+        if self.entries.len() >= self.max_capacity {
+            self.evict_oldest();
+        }
+
         self.entries.insert(
             query,
             CacheEntry {
@@ -86,11 +100,23 @@ impl AdaptiveCache {
         }
     }
 
-    /// Clear expired entries (can be called periodically)
-    #[allow(dead_code)]
+    /// Clear expired entries (called on insert when at capacity, and by the background task)
     pub fn cleanup(&self) {
         self.entries
             .retain(|_, entry| entry.created_at.elapsed() < self.ttl);
+    }
+
+    /// Evict the oldest entry by creation time
+    fn evict_oldest(&self) {
+        let oldest = self
+            .entries
+            .iter()
+            .min_by_key(|entry| entry.created_at)
+            .map(|entry| entry.key().clone());
+
+        if let Some(key) = oldest {
+            self.entries.remove(&key);
+        }
     }
 
     /// Clear all entries
@@ -156,7 +182,7 @@ mod tests {
 
     #[test]
     fn test_cache_expiry() {
-        let cache = AdaptiveCache::with_ttl(Duration::from_millis(10));
+        let cache = AdaptiveCache::with_ttl_and_capacity(Duration::from_millis(10), 100);
 
         let query = PriceQuery {
             product_id: "test".to_string(),
@@ -181,5 +207,29 @@ mod tests {
 
         // Should be expired now
         assert!(cache.get(&query).is_none());
+    }
+
+    #[test]
+    fn test_cache_capacity_limit() {
+        let cache = AdaptiveCache::with_ttl_and_capacity(Duration::from_secs(300), 3);
+
+        let result = PriceResult {
+            base_price: 10.0,
+            quantity_discount: 0.0,
+            options_cost: 0.0,
+            total_price: 10.0,
+        };
+
+        for i in 0..5 {
+            let query = PriceQuery {
+                product_id: format!("product-{i}"),
+                quantity: 1,
+                options: vec![],
+            };
+            cache.insert(query, result.clone());
+        }
+
+        // Cache should never exceed max_capacity + 1 (insert happens after eviction)
+        assert!(cache.stats().entries <= 4);
     }
 }

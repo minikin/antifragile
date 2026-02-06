@@ -17,20 +17,20 @@ services:
       - antifragile
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.5.1
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
     networks:
       - antifragile
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.3.2
     ports:
       - "3001:3000"
     environment:
@@ -47,7 +47,7 @@ services:
       - antifragile
 
   loadtest:
-    image: grafana/k6:latest
+    image: grafana/k6:1.5.0
     volumes:
       - ./loadtest:/scripts:ro
     environment:

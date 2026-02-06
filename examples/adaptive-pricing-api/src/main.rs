@@ -54,6 +54,16 @@ async fn main() {
 
     let state = Arc::new(AppState::new());
 
+    // Background task: evict expired cache entries every 60 seconds
+    let cleanup_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            cleanup_state.cache.cleanup();
+        }
+    });
+
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/price", post(calculate_price_handler))

@@ -3,34 +3,22 @@
 //! This module simulates complex pricing calculations that benefit from caching.
 
 use serde::{Deserialize, Serialize};
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use std::time::Duration;
 
 /// A price query representing a product configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PriceQuery {
     pub product_id: String,
     pub quantity: u32,
     pub options: Vec<String>,
 }
 
-impl PartialEq for PriceQuery {
-    fn eq(&self, other: &Self) -> bool {
-        self.product_id == other.product_id
-            && self.quantity == other.quantity
-            && self.options == other.options
-    }
-}
-
-impl Eq for PriceQuery {}
-
-impl Hash for PriceQuery {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.product_id.hash(state);
-        self.quantity.hash(state);
-        for opt in &self.options {
-            opt.hash(state);
-        }
+impl PriceQuery {
+    /// Normalize the query so option order doesn't affect cache lookups
+    pub fn normalized(mut self) -> Self {
+        self.options.sort();
+        self
     }
 }
 

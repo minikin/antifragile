@@ -26,18 +26,10 @@ use crate::metrics::ServiceMetrics;
 use crate::pricing::{PriceQuery, calculate_price};
 
 /// Application state shared across handlers
+#[derive(Default)]
 pub struct AppState {
     pub cache: AdaptiveCache,
     pub metrics: ServiceMetrics,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            cache: AdaptiveCache::new(),
-            metrics: ServiceMetrics::new(),
-        }
-    }
 }
 
 #[tokio::main]
@@ -52,7 +44,7 @@ async fn main() {
 
     let metrics_handle = metrics::setup_metrics_recorder();
 
-    let state = Arc::new(AppState::new());
+    let state = Arc::new(AppState::default());
 
     // Background task: evict expired cache entries every 60 seconds
     let cleanup_state = Arc::clone(&state);
@@ -84,7 +76,17 @@ async fn main() {
     tracing::info!("Metrics available at http://0.0.0.0:3000/metrics");
     tracing::info!("Antifragile status at http://0.0.0.0:3000/antifragile/status");
 
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .unwrap();
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to install Ctrl+C handler");
+    tracing::info!("Shutting down gracefully...");
 }
 
 async fn health_check() -> &'static str {
@@ -93,6 +95,7 @@ async fn health_check() -> &'static str {
 
 /// Request body for price calculation
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PriceRequest {
     pub product_id: String,
     pub quantity: u32,
@@ -114,13 +117,24 @@ async fn calculate_price_handler(
     State(state): State<Arc<AppState>>,
     Json(request): Json<PriceRequest>,
 ) -> Result<Json<PriceResponse>, StatusCode> {
+    if request.quantity == 0 || request.quantity > 100_000 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if request.product_id.len() > 128 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if request.options.len() > 20 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
     let start = Instant::now();
 
     let query = PriceQuery {
         product_id: request.product_id,
         quantity: request.quantity,
         options: request.options,
-    };
+    }
+    .normalized();
 
     let (result, cache_hit) = if let Some(cached) = state.cache.get(&query) {
         state.metrics.record_cache_hit();
@@ -170,8 +184,6 @@ pub struct ConvexityAnalysis {
 
 /// Get current antifragile classification
 async fn antifragile_status(State(state): State<Arc<AppState>>) -> Json<AntifragileStatusResponse> {
-    use antifragile::Triad;
-
     let stats = state.metrics.get_stats();
 
     let snapshot = metrics::ServiceSnapshot {
@@ -181,27 +193,25 @@ async fn antifragile_status(State(state): State<Arc<AppState>>) -> Json<Antifrag
         avg_response_time_ms: stats.avg_response_time_ms,
     };
 
+    let classification = snapshot.classify();
     let exponent = snapshot.exponent();
 
-    // Classify based on exponent (more reliable than numerical convexity test)
-    let (classification, curve_shape) = if exponent < 0.95 {
-        (Triad::Fragile, "concave")
-    } else if exponent > 1.05 {
-        (Triad::Antifragile, "convex")
-    } else {
-        (Triad::Robust, "linear")
+    let curve_shape = match classification {
+        antifragile::Triad::Fragile => "concave",
+        antifragile::Triad::Robust => "linear",
+        antifragile::Triad::Antifragile => "convex",
     };
 
     let explanation = match classification {
-        Triad::Antifragile => "Cache is hot. System benefits from stress.",
-        Triad::Robust => "Cache is warming. System scales proportionally.",
-        Triad::Fragile => "Cache is cold. System degrades under load.",
+        antifragile::Triad::Antifragile => "Cache is hot. System benefits from stress.",
+        antifragile::Triad::Robust => "Cache is warming. System scales proportionally.",
+        antifragile::Triad::Fragile => "Cache is cold. System degrades under load.",
     };
 
     Json(AntifragileStatusResponse {
-        classification: format!("{:?}", classification),
+        classification: format!("{classification:?}"),
         rank: classification.rank(),
-        description: format!("{}", classification),
+        description: format!("{classification}"),
         metrics: CurrentMetrics {
             total_requests: stats.total_requests,
             cache_hit_rate: stats.cache_hit_rate,
@@ -240,12 +250,10 @@ async fn antifragile_curve(State(state): State<Arc<AppState>>) -> Json<CurveResp
     };
 
     let exponent = snapshot.exponent();
-    let curve_shape = if exponent < 0.95 {
-        "concave (Fragile)"
-    } else if exponent > 1.05 {
-        "convex (Antifragile)"
-    } else {
-        "linear (Robust)"
+    let curve_shape = match snapshot.classify() {
+        antifragile::Triad::Fragile => "concave (Fragile)",
+        antifragile::Triad::Robust => "linear (Robust)",
+        antifragile::Triad::Antifragile => "convex (Antifragile)",
     }
     .to_string();
 
@@ -277,13 +285,13 @@ async fn antifragile_history(State(state): State<Arc<AppState>>) -> Json<Vec<His
     let history = state.metrics.get_history();
     Json(
         history
-            .into_iter()
+            .iter()
             .map(|h| HistoryEntry {
                 timestamp: h.timestamp.to_rfc3339(),
                 total_requests: h.total_requests,
                 cache_hit_rate: h.cache_hit_rate,
                 avg_response_time_ms: h.avg_response_time_ms,
-                classification: h.classification,
+                classification: h.classification.clone(),
             })
             .collect(),
     )

@@ -3,13 +3,18 @@
 //! This module tracks service metrics and implements the Antifragile trait
 //! to analyze system behavior under load.
 
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use antifragile::Antifragile;
 use chrono::{DateTime, Utc};
 use metrics::{counter, gauge, histogram};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use parking_lot::RwLock;
+
+/// Sliding window size for requests-per-second calculation
+const RPS_WINDOW: Duration = Duration::from_secs(10);
 
 /// Raw counters protected by a single lock for snapshot-consistent reads
 #[derive(Debug, Clone)]
@@ -18,13 +23,14 @@ struct Counters {
     cache_hits: u64,
     cache_misses: u64,
     total_response_time_us: u64,
+    /// Timestamps of recent requests within the sliding window
+    recent_timestamps: VecDeque<Instant>,
 }
 
 /// Service metrics collector
 pub struct ServiceMetrics {
     counters: RwLock<Counters>,
-    history: RwLock<Vec<HistoryEntry>>,
-    start_time: std::time::Instant,
+    history: RwLock<Arc<VecDeque<HistoryEntry>>>,
 }
 
 /// A point-in-time snapshot of service metrics
@@ -66,9 +72,9 @@ impl ServiceMetrics {
                 cache_hits: 0,
                 cache_misses: 0,
                 total_response_time_us: 0,
+                recent_timestamps: VecDeque::new(),
             }),
-            history: RwLock::new(Vec::new()),
-            start_time: std::time::Instant::now(),
+            history: RwLock::new(Arc::new(VecDeque::new())),
         }
     }
 
@@ -77,36 +83,21 @@ impl ServiceMetrics {
             let mut c = self.counters.write();
             c.total_requests += 1;
             c.total_response_time_us += duration.as_micros() as u64;
+            let now = Instant::now();
+            c.recent_timestamps.push_back(now);
+            let cutoff = now - RPS_WINDOW;
+            while c.recent_timestamps.front().is_some_and(|&t| t < cutoff) {
+                c.recent_timestamps.pop_front();
+            }
             c.total_requests
         };
 
         counter!("pricing_requests_total").increment(1);
         histogram!("pricing_response_time_seconds").record(duration.as_secs_f64());
 
-        let stats = self.get_stats();
-        gauge!("pricing_cache_hit_ratio").set(stats.cache_hit_rate);
-        gauge!("pricing_avg_response_time_ms").set(stats.avg_response_time_ms);
-
-        // Export antifragile status metrics
-        let snapshot = ServiceSnapshot {
-            total_requests: stats.total_requests,
-            cache_hits: stats.cache_hits,
-            cache_misses: stats.cache_misses,
-            avg_response_time_ms: stats.avg_response_time_ms,
-        };
-        let exponent = snapshot.exponent();
-        gauge!("antifragile_exponent").set(exponent);
-        // Classification rank: 0=Fragile, 1=Robust, 2=Antifragile
-        let rank = if exponent < 0.95 {
-            0.0
-        } else if exponent > 1.05 {
-            2.0
-        } else {
-            1.0
-        };
-        gauge!("antifragile_classification_rank").set(rank);
-
+        // Update derived gauges and history periodically, not on every request
         if count % 100 == 0 {
+            self.update_gauges();
             self.record_history_entry();
         }
     }
@@ -137,11 +128,9 @@ impl ServiceMetrics {
             0.0
         };
 
-        let elapsed = self.start_time.elapsed().as_secs_f64();
-        let requests_per_second = if elapsed > 0.0 {
-            c.total_requests as f64 / elapsed
-        } else {
-            0.0
+        let requests_per_second = {
+            let window_secs = RPS_WINDOW.as_secs_f64();
+            c.recent_timestamps.len() as f64 / window_secs
         };
 
         ServiceStats {
@@ -154,6 +143,21 @@ impl ServiceMetrics {
         }
     }
 
+    fn update_gauges(&self) {
+        let stats = self.get_stats();
+        gauge!("pricing_cache_hit_ratio").set(stats.cache_hit_rate);
+        gauge!("pricing_avg_response_time_ms").set(stats.avg_response_time_ms);
+
+        let snapshot = ServiceSnapshot {
+            total_requests: stats.total_requests,
+            cache_hits: stats.cache_hits,
+            cache_misses: stats.cache_misses,
+            avg_response_time_ms: stats.avg_response_time_ms,
+        };
+        gauge!("antifragile_exponent").set(snapshot.exponent());
+        gauge!("antifragile_classification_rank").set(snapshot.classify().rank() as f64);
+    }
+
     fn record_history_entry(&self) {
         let stats = self.get_stats();
 
@@ -164,34 +168,27 @@ impl ServiceMetrics {
             avg_response_time_ms: stats.avg_response_time_ms,
         };
 
-        // Classify based on exponent
-        let exponent = snapshot.exponent();
-        let classification = if exponent < 0.95 {
-            antifragile::Triad::Fragile
-        } else if exponent > 1.05 {
-            antifragile::Triad::Antifragile
-        } else {
-            antifragile::Triad::Robust
-        };
-
         let entry = HistoryEntry {
             timestamp: Utc::now(),
             total_requests: stats.total_requests,
             cache_hit_rate: stats.cache_hit_rate,
             avg_response_time_ms: stats.avg_response_time_ms,
-            classification: format!("{:?}", classification),
+            classification: format!("{:?}", snapshot.classify()),
         };
 
-        let mut history = self.history.write();
-        history.push(entry);
+        let mut history_lock = self.history.write();
+        let mut entries = (**history_lock).clone();
+        entries.push_back(entry);
 
-        if history.len() > 1000 {
-            history.drain(0..100);
+        while entries.len() > 1000 {
+            entries.pop_front();
         }
+
+        *history_lock = Arc::new(entries);
     }
 
-    pub fn get_history(&self) -> Vec<HistoryEntry> {
-        self.history.read().clone()
+    pub fn get_history(&self) -> Arc<VecDeque<HistoryEntry>> {
+        Arc::clone(&self.history.read())
     }
 }
 
@@ -256,6 +253,18 @@ impl Antifragile for ServiceSnapshot {
 }
 
 impl ServiceSnapshot {
+    /// Classify the snapshot on the Triad based on exponent thresholds
+    pub fn classify(&self) -> antifragile::Triad {
+        let exponent = self.exponent();
+        if exponent < 0.95 {
+            antifragile::Triad::Fragile
+        } else if exponent > 1.05 {
+            antifragile::Triad::Antifragile
+        } else {
+            antifragile::Triad::Robust
+        }
+    }
+
     /// Get the current exponent value (for diagnostics)
     pub fn exponent(&self) -> f64 {
         let hit_rate = if self.total_requests > 0 {
@@ -301,14 +310,7 @@ mod tests {
     }
 
     fn classify_snapshot(snapshot: &ServiceSnapshot) -> Triad {
-        let exponent = snapshot.exponent();
-        if exponent < 0.95 {
-            Triad::Fragile
-        } else if exponent > 1.05 {
-            Triad::Antifragile
-        } else {
-            Triad::Robust
-        }
+        snapshot.classify()
     }
 
     #[test]

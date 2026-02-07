@@ -180,3 +180,20 @@ jobs:
 
       - name: Check with minimal versions
         run: cargo +nightly -Z minimal-versions check --all-features
+
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+
+      - name: Run Miri
+        run: cargo +nightly miri test
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
